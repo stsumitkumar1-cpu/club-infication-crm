@@ -1,0 +1,376 @@
+// Club Infication CRM — Prisma Schema
+// Source of truth: docs/CRM_MASTER_SPEC.md §6
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS ──────────────────────────────────────────────
+
+enum Role {
+  SUPER_ADMIN
+  MANAGER
+  EXECUTIVE
+}
+
+/// Mirror of the customer's membership status (Spec 11 calls the search filter
+/// "Membership status"). Kept in step by MembershipsService, never by hand --
+/// EXPIRED exists so a plan that ran its term is not recorded as a cancellation.
+enum CustomerStatus {
+  ACTIVE
+  PENDING
+  CANCELLED
+  EXPIRED
+}
+
+enum MembershipStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum BookingStatus {
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum IncentiveStatus {
+  CALCULATED
+  PAID
+  PENDING
+}
+
+enum ImportStatus {
+  UPLOADED
+  VALIDATING
+  VALIDATED
+  IMPORTING
+  COMPLETED
+  FAILED
+}
+
+enum ImportRowStatus {
+  PENDING
+  VALID
+  INVALID
+  IMPORTED
+  SKIPPED
+}
+
+// ─── USERS & TEAMS ─────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role
+  isActive         Boolean  @default(true)
+  resetToken       String?
+  resetTokenExpiry DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Team Hierarchy: A Manager manages multiple Executives
+  managerId    String?
+  manager      User?    @relation("TeamHierarchy", fields: [managerId], references: [id])
+  executives   User[]   @relation("TeamHierarchy")
+
+  // Assigned customers
+  customers    Customer[]
+
+  // Incentive records for this executive
+  incentiveRecords IncentiveRecord[]
+
+  // Refunds approved by this user
+  approvedRefunds  Refund[] @relation("RefundApprover")
+
+  // Audit logs where this user is the actor
+  auditLogs    AuditLog[]
+
+  // Import batches uploaded by this user
+  importBatches ImportBatch[]
+
+  @@index([managerId])
+  @@index([role])
+}
+
+// ─── CUSTOMERS ──────────────────────────────────────────
+
+model Customer {
+  id              String         @id @default(uuid())
+  membershipId    String?        @unique  // Business identifier (e.g., CI-2026-001)
+  name            String
+  phone           String         @unique
+  email           String?
+  plan            String         // e.g., "Bronze", "Silver", "Gold"
+  amount          Float          // Total plan cost
+  amountPaid      Float          @default(0)
+  pendingAmount   Float          @default(0)
+  validity        String?        // e.g., "5 Years"
+  totalDays       Int            @default(0)
+  totalNights     Int            @default(0)
+  status          CustomerStatus @default(ACTIVE)
+
+  assignedExecId  String?
+  assignedExec    User?          @relation(fields: [assignedExecId], references: [id])
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relations
+  memberships     Membership[]
+  payments        Payment[]
+  refunds         Refund[]
+  bookings        Booking[]
+  entitlementLog  EntitlementLedger[]
+
+  @@index([assignedExecId])
+  @@index([status])
+  @@index([plan])
+}
+
+// ─── PACKAGES ───────────────────────────────────────────
+
+model Package {
+  id             String   @id @default(uuid())
+  name           String   @unique  // e.g., "Bronze", "Silver", "Gold"
+  price          Float
+  days           Int
+  nights         Int
+  validityMonths Int
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  memberships    Membership[]
+}
+
+// ─── MEMBERSHIPS ────────────────────────────────────────
+
+model Membership {
+  id          String           @id @default(uuid())
+  customerId  String
+  customer    Customer         @relation(fields: [customerId], references: [id])
+  packageId   String?
+  package     Package?         @relation(fields: [packageId], references: [id])
+  startDate   DateTime         @default(now())
+  endDate     DateTime?
+  status      MembershipStatus @default(ACTIVE)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  entitlementLog EntitlementLedger[]
+  bookings       Booking[]
+  payments       Payment[]
+  refunds        Refund[]
+
+  @@index([customerId])
+  @@index([status])
+}
+
+// ─── ENTITLEMENT LEDGER ─────────────────────────────────
+
+/// Append-only record of every entitlement movement — Master Spec 7.
+/// Balance is SUM(days) / SUM(nights) over these rows; there is deliberately no
+/// remaining_days column to decrement.
+model EntitlementLedger {
+  id           String      @id @default(uuid())
+  customerId   String
+  customer     Customer    @relation(fields: [customerId], references: [id])
+  membershipId String?
+  membership   Membership? @relation(fields: [membershipId], references: [id])
+
+  /// Which booking caused this movement, for BOOKING_USAGE and CANCELLATION.
+  bookingId    String?
+  booking      Booking?    @relation(fields: [bookingId], references: [id])
+
+  type         String      // ALLOCATION, BOOKING_USAGE, CANCELLATION, ADJUSTMENT, EXPIRY
+  days         Int         @default(0)  // positive = credit, negative = debit
+  nights       Int         @default(0)  // positive = credit, negative = debit
+  description  String?
+  date         DateTime    @default(now())
+
+  /// Who recorded the movement. Ledger rows are never edited or deleted.
+  actorId      String?
+  createdAt    DateTime    @default(now())
+
+  @@index([customerId])
+  @@index([membershipId])
+  @@index([bookingId])
+  @@index([type])
+}
+
+// ─── BOOKINGS ───────────────────────────────────────────
+
+model Booking {
+  id           String        @id @default(uuid())
+  customerId   String
+  customer     Customer      @relation(fields: [customerId], references: [id])
+  membershipId String?
+  membership   Membership?   @relation(fields: [membershipId], references: [id])
+  checkIn      DateTime
+  checkOut     DateTime
+  daysUsed     Int           @default(0)
+  nightsUsed   Int           @default(0)
+  status       BookingStatus @default(CONFIRMED)
+  notes        String?
+
+  /// Idempotency control (Spec 8): a retried request carrying the same key
+  /// returns the original booking instead of consuming entitlement twice.
+  idempotencyKey String?     @unique
+
+  /// Every movement this booking caused, so a cancellation can restore
+  /// precisely what was taken.
+  entitlementLog EntitlementLedger[]
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([customerId])
+  @@index([membershipId])
+  @@index([status])
+  @@index([checkIn])
+}
+
+// ─── PAYMENTS ───────────────────────────────────────────
+
+model Payment {
+  id         String   @id @default(uuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  // Which purchase this money was for. Nullable because legacy Excel rows
+  // (Phase 9) arrive without a membership to attach to.
+  membershipId String?
+  membership   Membership? @relation(fields: [membershipId], references: [id])
+
+  amount     Float
+  method     String?  // e.g., "Cash", "UPI", "Bank Transfer"
+  date       DateTime @default(now())
+  notes      String?
+
+  // Idempotency control (Spec 8): a retried request carrying the same key
+  // returns the original payment instead of recording it twice.
+  idempotencyKey String? @unique
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([membershipId])
+  @@index([date])
+}
+
+// ─── REFUNDS ────────────────────────────────────────────
+
+model Refund {
+  id           String   @id @default(uuid())
+  customerId   String
+  customer     Customer @relation(fields: [customerId], references: [id])
+
+  // Spec 9.2: a refund is recorded against the relevant customer AND membership.
+  membershipId String?
+  membership   Membership? @relation(fields: [membershipId], references: [id])
+
+  amount       Float
+  date         DateTime @default(now())
+  reason       String?
+  approvedById String?
+  approvedBy   User?    @relation("RefundApprover", fields: [approvedById], references: [id])
+
+  idempotencyKey String? @unique
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([membershipId])
+  @@index([date])
+}
+
+// ─── INCENTIVES ─────────────────────────────────────────
+
+model IncentiveRule {
+  id            String    @id @default(uuid())
+  name          String
+  minSales      Float
+  maxSales      Float?
+  percentage    Float
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model IncentiveRecord {
+  id              String          @id @default(uuid())
+  executiveId     String
+  executive       User            @relation(fields: [executiveId], references: [id])
+  period          String          // e.g., "2026-08" (year-month)
+  totalSales      Float           @default(0)
+  eligibleSales   Float           @default(0)
+  incentiveEarned Float           @default(0)
+  incentivePaid   Float           @default(0)
+  status          IncentiveStatus @default(PENDING)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@unique([executiveId, period])
+  @@index([executiveId])
+}
+
+// ─── AUDIT ──────────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id])
+  action    String   // CREATE, UPDATE, DELETE, LOGIN, etc.
+  entity    String   // Table/model name
+  entityId  String?  // ID of the affected record
+  metadata  String?  // JSON string with before/after or extra context
+  timestamp DateTime @default(now())
+
+  @@index([actorId])
+  @@index([entity, entityId])
+  @@index([timestamp])
+}
+
+// ─── EXCEL IMPORT ───────────────────────────────────────
+
+model ImportBatch {
+  id           String       @id @default(uuid())
+  fileName     String
+  status       ImportStatus @default(UPLOADED)
+  totalRows    Int          @default(0)
+  validRows    Int          @default(0)
+  importedRows Int          @default(0)
+  uploadedById String?
+  uploadedBy   User?        @relation(fields: [uploadedById], references: [id])
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  stagingRows  ImportStaging[]
+}
+
+model ImportStaging {
+  id               String          @id @default(uuid())
+  batchId          String
+  batch            ImportBatch     @relation(fields: [batchId], references: [id])
+  rowNumber        Int
+  rawData          String          // JSON of the original row
+  validationErrors String?         // JSON of validation errors
+  mappedData       String?         // JSON of normalized/mapped data
+  importStatus     ImportRowStatus @default(PENDING)
+  createdAt        DateTime        @default(now())
+
+  @@index([batchId])
+}
