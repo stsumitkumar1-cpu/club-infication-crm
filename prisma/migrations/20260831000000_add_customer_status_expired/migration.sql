@@ -1,0 +1,13 @@
+-- Adds EXPIRED to CustomerStatus.
+--
+-- Customer.status is the customer-facing mirror of their membership status --
+-- Master Spec 11 names the search filter "Membership status" and the enum
+-- carried exactly its three values. But MembershipStatus has ACTIVE, EXPIRED
+-- and CANCELLED, so an expired plan had nowhere to land: writing CANCELLED
+-- would record that the customer cancelled when they simply reached the end of
+-- their term. The fourth value exists so the mirror can be truthful rather
+-- than approximate.
+--
+-- Purely additive: no existing row changes, and every existing value stays
+-- valid.
+ALTER TYPE "CustomerStatus" ADD VALUE IF NOT EXISTS 'EXPIRED';
