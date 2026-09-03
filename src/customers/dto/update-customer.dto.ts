@@ -1,4 +1,12 @@
-import { IsString, IsOptional, IsNumber, IsEmail, IsEnum, Min } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsNumber,
+  IsEmail,
+  IsEnum,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class UpdateCustomerDto {
   @IsOptional()
@@ -12,6 +20,27 @@ export class UpdateCustomerDto {
   @IsOptional()
   @IsEmail()
   email?: string;
+
+  /**
+   * Second contact number. 175 rows of the legacy sheet hold two numbers in one
+   * cell, and the client confirmed both are wanted.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  altPhone?: string;
+
+  /** Second applicant on the membership. Present in 819 of 821 sheet rows. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  coApplicant?: string;
+
+  /** Town or city — Bathinda, Moga, Ludhiana. 108 distinct in the sheet. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  location?: string;
 
   @IsOptional()
   @IsString()

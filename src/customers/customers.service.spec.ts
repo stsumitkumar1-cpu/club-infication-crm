@@ -236,11 +236,31 @@ describe('CustomersService (scope + ownership)', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
+    /*
+     * The check reads through findFirst now, not findUnique: phone stopped being
+     * a unique column when the legacy sheet turned out to contain two members
+     * sharing one number. The rule for manual entry is unchanged — only where
+     * it is enforced moved, from the database to the service.
+     */
     it('rejects a duplicate phone number', async () => {
-      prisma.customer.findUnique.mockResolvedValue({ id: 'existing' });
+      prisma.customer.findFirst.mockResolvedValue({ id: 'existing' });
       await expect(service.create(dto as any, SUPER_ADMIN)).rejects.toThrow(
         ConflictException,
       );
+      expect(prisma.customer.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a duplicate membership ID', async () => {
+      prisma.customer.findFirst
+        // no phone clash
+        .mockResolvedValueOnce(null)
+        // but the MAF number is taken
+        .mockResolvedValueOnce({ id: 'existing' });
+
+      await expect(
+        service.create({ ...dto, membershipId: 'MAF-140951' } as any, SUPER_ADMIN),
+      ).rejects.toThrow(/membership ID already exists/);
+      expect(prisma.customer.create).not.toHaveBeenCalled();
     });
 
     it('derives the pending amount from amount - amountPaid', async () => {
@@ -437,12 +457,99 @@ describe('CustomersService (scope + ownership)', () => {
     });
   });
 
+  /*
+   * The tiles above the customer list. They used to ignore the filters
+   * entirely: picking one Executive narrowed the table to their 198 customers
+   * while the headline still read 835, and the money totalled the whole
+   * business. A summary that does not describe the rows beneath it is worse
+   * than no summary.
+   */
   describe('getStats', () => {
+    /** The `where` of the Nth count() call. */
+    const countWhere = (n = 0) =>
+      prisma.customer.count.mock.calls[n][0].where;
+
     it('scopes the counters to the caller', async () => {
-      await service.getStats(EXECUTIVE_A);
-      const firstCount = prisma.customer.count.mock.calls[0][0];
-      expect(firstCount.where.AND[0]).toEqual({
+      await service.getStats({}, EXECUTIVE_A);
+      expect(countWhere().AND[0]).toEqual({
         assignedExecId: EXECUTIVE_A.sub,
+      });
+    });
+
+    it('narrows every counter by the owner filter', async () => {
+      await service.getStats({ assignedExecId: 'exec-b' }, SUPER_ADMIN);
+
+      // Every count, not just the first — otherwise Total would be filtered
+      // while Active was not.
+      for (const call of prisma.customer.count.mock.calls) {
+        expect(call[0].where.AND).toContainEqual({ assignedExecId: 'exec-b' });
+      }
+    });
+
+    it('narrows the money aggregate by the same filter', async () => {
+      await service.getStats({ assignedExecId: 'exec-b' }, SUPER_ADMIN);
+
+      const { where } = prisma.customer.aggregate.mock.calls[0][0];
+      expect(where.AND).toContainEqual({ assignedExecId: 'exec-b' });
+    });
+
+    it('narrows by plan, manager and search too', async () => {
+      await service.getStats(
+        {
+          plan: 'Silver',
+          assignedManagerId: '11111111-1111-4111-8111-111111111111',
+          search: 'raj',
+        },
+        SUPER_ADMIN,
+      );
+
+      const and = countWhere().AND;
+      expect(and).toContainEqual({ plan: 'Silver' });
+      expect(and).toContainEqual({
+        assignedExec: { managerId: '11111111-1111-4111-8111-111111111111' },
+      });
+      expect(JSON.stringify(and)).toContain('raj');
+    });
+
+    /*
+     * The status counters are a breakdown BY status and double as the switcher
+     * between them. Applying the status filter would collapse the breakdown —
+     * click "Cancelled" and Total would read 3 as well, with no way back.
+     */
+    it('leaves the status counters unfiltered by status', async () => {
+      await service.getStats({ status: 'CANCELLED' }, SUPER_ADMIN);
+
+      for (const call of prisma.customer.count.mock.calls) {
+        const explicit = call[0].where.AND.filter(
+          (c: any) => c.status === 'CANCELLED',
+        );
+        // At most the one this particular counter adds for itself.
+        expect(explicit.length).toBeLessThanOrEqual(1);
+      }
+      // The first call is the Total, which must carry no status at all.
+      expect(countWhere().AND).not.toContainEqual({ status: 'CANCELLED' });
+    });
+
+    /*
+     * The money tiles do describe the rows on screen, so they DO honour the
+     * status filter.
+     */
+    it('applies the status filter to the money aggregate', async () => {
+      await service.getStats({ status: 'CANCELLED' }, SUPER_ADMIN);
+
+      const { where } = prisma.customer.aggregate.mock.calls[0][0];
+      expect(where.AND).toContainEqual({ status: 'CANCELLED' });
+    });
+
+    it('reports what the figures were narrowed by', async () => {
+      const res = await service.getStats(
+        { assignedExecId: 'exec-b', status: 'ACTIVE' },
+        SUPER_ADMIN,
+      );
+
+      expect(res.scopedBy).toMatchObject({
+        assignedExecId: 'exec-b',
+        status: 'ACTIVE',
       });
     });
   });

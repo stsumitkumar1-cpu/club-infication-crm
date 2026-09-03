@@ -44,7 +44,7 @@ describe('EntitlementsService (ledger — Spec 7)', () => {
       create: AnyMock;
     };
     customer: { findFirst: AnyMock };
-    membership: { findFirst: AnyMock };
+    membership: { findFirst: AnyMock; findMany: AnyMock; findUnique: AnyMock };
     $queryRaw: AnyMock;
     $transaction: AnyMock;
   };
@@ -66,7 +66,13 @@ describe('EntitlementsService (ledger — Spec 7)', () => {
       customer: {
         findFirst: mockFn().mockResolvedValue({ id: 'cust-1', name: 'Asha' }),
       },
-      membership: { findFirst: mockFn().mockResolvedValue({ id: 'ms-1' }) },
+      membership: {
+        findFirst: mockFn().mockResolvedValue({ id: 'ms-1' }),
+        // getBalance reconciles the annual years before reading, which
+        // needs the active memberships and each one's plan.
+        findMany: mockFn().mockResolvedValue([]),
+        findUnique: mockFn().mockResolvedValue(null),
+      },
       $queryRaw: mockFn().mockResolvedValue([{ id: 'ms-1' }]),
       $transaction: mockFn().mockImplementation((cb: any) => cb(prisma)),
     };
@@ -93,10 +99,15 @@ describe('EntitlementsService (ledger — Spec 7)', () => {
         membershipId: 'ms-1',
       });
 
-      expect(balance).toEqual({ nights: 5, days: 6 });
+      expect(balance).toEqual({ nights: 5, days: 6, complimentaryNights: 5 });
       expect(prisma.entitlementLedger.aggregate).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { customerId: 'cust-1', membershipId: 'ms-1' },
+          where: {
+            customerId: 'cust-1',
+            membershipId: 'ms-1',
+            // Plan and complimentary are summed separately.
+            bucket: 'PLAN',
+          },
           // The days column is not even fetched: it is not a quantity.
           _sum: { nights: true },
         }),
@@ -110,13 +121,38 @@ describe('EntitlementsService (ledger — Spec 7)', () => {
 
       await expect(
         service.balanceFor(prisma as any, { customerId: 'cust-1' }),
-      ).resolves.toEqual({ days: 0, nights: 0 });
+      ).resolves.toEqual({ days: 0, nights: 0, complimentaryNights: 0 });
     });
 
     it('covers every membership when none is named', async () => {
       await service.balanceFor(prisma as any, { customerId: 'cust-1' });
       const { where } = prisma.entitlementLedger.aggregate.mock.calls[0][0];
-      expect(where).toEqual({ customerId: 'cust-1' });
+      // No membershipId narrowing; the bucket is always named because plan and
+      // complimentary nights are summed apart.
+      expect(where).toEqual({ customerId: 'cust-1', bucket: 'PLAN' });
+    });
+
+    it('sums the complimentary bucket separately from the plan', async () => {
+      prisma.entitlementLedger.aggregate
+        .mockResolvedValueOnce({ _sum: { nights: 4 } })   // PLAN
+        .mockResolvedValueOnce({ _sum: { nights: 2 } });  // COMPLIMENTARY
+
+      const balance = await service.balanceFor(prisma as any, {
+        customerId: 'cust-1',
+      });
+
+      /*
+       * Not 6. Complimentary nights are a gift on top of the plan, so adding
+       * them in would overstate what the plan is worth — the client asked for
+       * them counted apart.
+       */
+      expect(balance.nights).toBe(4);
+      expect(balance.complimentaryNights).toBe(2);
+
+      const buckets = prisma.entitlementLedger.aggregate.mock.calls.map(
+        (c: any) => c[0].where.bucket,
+      );
+      expect(buckets).toEqual(['PLAN', 'COMPLIMENTARY']);
     });
   });
 
@@ -168,7 +204,7 @@ describe('EntitlementsService (ledger — Spec 7)', () => {
         customerId: 'cust-1',
       });
 
-      expect(balance).toEqual({ nights: 6, days: 7 });
+      expect(balance).toEqual({ nights: 6, days: 7, complimentaryNights: 6 });
     });
 
     it('reports zero days when no nights are left, not one', async () => {
@@ -180,7 +216,7 @@ describe('EntitlementsService (ledger — Spec 7)', () => {
         customerId: 'cust-1',
       });
 
-      expect(balance).toEqual({ nights: 0, days: 0 });
+      expect(balance).toEqual({ nights: 0, days: 0, complimentaryNights: 0 });
     });
   });
 
@@ -350,10 +386,324 @@ describe('EntitlementsService (ledger — Spec 7)', () => {
         SUPER_ADMIN,
       );
 
-      expect(result.remaining).toEqual({ nights: 5, days: 6 });
+      expect(result.remaining).toEqual({
+        nights: 5,
+        days: 6,
+        complimentaryNights: 5,
+      });
       expect(result.credited).toEqual({ nights: 8 });
       expect(result.debited).toEqual({ nights: 3 });
       expect(result.breakdown).toHaveLength(2);
     });
   });
+  /*
+   * The client's rule: a plan grants N nights each membership year and unused
+   * nights LAPSE at the end of that year. Granting the whole term up front
+   * would let a member take five years of nights in month one, which is exactly
+   * what lapsing exists to prevent.
+   *
+   * Both halves are written as real ledger rows, and that is what keeps
+   * balanceFor a plain SUM: each past year's allocation and its expiry cancel
+   * out, so the sum is the current year's remainder and nothing else.
+   */
+  describe('reconcileAnnualEntitlement (annual grant and lapse)', () => {
+    const START = new Date('2024-08-31T00:00:00.000Z');
+
+    /** A 5-year plan granting 6 nights a year. */
+    const annualMembership = (overrides: Record<string, unknown> = {}) => ({
+      id: 'ms-1',
+      customerId: 'cust-1',
+      startDate: START,
+      status: 'ACTIVE',
+      package: { name: 'Silver', nightsPerYear: 6, validityMonths: 60 },
+      ...overrides,
+    });
+
+    /** Every ALLOCATION written, as {year, nights}. */
+    const allocations = () =>
+      prisma.entitlementLedger.create.mock.calls
+        .map((c: any) => c[0].data)
+        .filter((d: any) => d.type === LedgerType.ALLOCATION)
+        .map((d: any) => ({ year: d.yearIndex, nights: d.nights }));
+
+    /** Every EXPIRY written, as {year, nights}. */
+    const expiries = () =>
+      prisma.entitlementLedger.create.mock.calls
+        .map((c: any) => c[0].data)
+        .filter((d: any) => d.type === LedgerType.EXPIRY)
+        .map((d: any) => ({ year: d.yearIndex, nights: d.nights }));
+
+    beforeEach(() => {
+      prisma.membership.findUnique.mockResolvedValue(annualMembership());
+      // No allocation rows yet, and nothing left in any past year unless a test
+      // says otherwise.
+      prisma.entitlementLedger.findMany.mockResolvedValue([]);
+      prisma.entitlementLedger.count.mockResolvedValue(0);
+      prisma.entitlementLedger.aggregate.mockResolvedValue({
+        _sum: { nights: 0 },
+      });
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    const at = (iso: string) => jest.setSystemTime(new Date(iso));
+
+    it('grants only year 1 in the first year, not the whole term', async () => {
+      at('2024-09-15T00:00:00.000Z');
+
+      const res = await service.reconcileAnnualEntitlement(
+        prisma as any,
+        'ms-1',
+        'admin-1',
+      );
+
+      expect(allocations()).toEqual([{ year: 1, nights: 6 }]);
+      // Emphatically not 30 — that is the whole point of the rule.
+      expect(res.allocatedNights).toBe(6);
+      expect(expiries()).toEqual([]);
+    });
+
+    it('grants the years that have begun and lapses the ones that ended', async () => {
+      // Two anniversaries have passed, so the member is in year 3.
+      at('2026-09-15T00:00:00.000Z');
+      // Years 1 and 2 each still hold their full 6 nights, unused.
+      prisma.entitlementLedger.aggregate.mockResolvedValue({
+        _sum: { nights: 6 },
+      });
+
+      const res = await service.reconcileAnnualEntitlement(
+        prisma as any,
+        'ms-1',
+        'admin-1',
+      );
+
+      expect(allocations()).toEqual([
+        { year: 1, nights: 6 },
+        { year: 2, nights: 6 },
+        { year: 3, nights: 6 },
+      ]);
+      // Years 1 and 2 lapse; year 3 is current and untouched.
+      expect(expiries()).toEqual([
+        { year: 1, nights: -6 },
+        { year: 2, nights: -6 },
+      ]);
+      expect(res.yearIndex).toBe(3);
+      expect(res.lapsedNights).toBe(12);
+    });
+
+    it('lapses only what was actually left in a past year', async () => {
+      at('2025-09-15T00:00:00.000Z'); // year 2
+      // Year 1 had 6, the member used 4, so 2 lapse.
+      prisma.entitlementLedger.aggregate.mockResolvedValue({
+        _sum: { nights: 2 },
+      });
+
+      const res = await service.reconcileAnnualEntitlement(
+        prisma as any,
+        'ms-1',
+        'admin-1',
+      );
+
+      expect(expiries()).toEqual([{ year: 1, nights: -2 }]);
+      expect(res.lapsedNights).toBe(2);
+    });
+
+    it('writes no expiry for a past year the member emptied', async () => {
+      at('2025-09-15T00:00:00.000Z');
+      prisma.entitlementLedger.aggregate.mockResolvedValue({
+        _sum: { nights: 0 },
+      });
+
+      await service.reconcileAnnualEntitlement(prisma as any, 'ms-1');
+
+      expect(expiries()).toEqual([]);
+    });
+
+    /*
+     * Called on every balance read and every booking, so running twice must not
+     * grant twice. This is the property that makes lazy reconciliation safe.
+     */
+    it('is idempotent — a year already granted is not granted again', async () => {
+      at('2026-09-15T00:00:00.000Z');
+      prisma.entitlementLedger.findMany.mockResolvedValue([
+        { yearIndex: 1 },
+        { yearIndex: 2 },
+        { yearIndex: 3 },
+      ]);
+
+      const res = await service.reconcileAnnualEntitlement(
+        prisma as any,
+        'ms-1',
+      );
+
+      expect(allocations()).toEqual([]);
+      expect(res.allocatedNights).toBe(0);
+    });
+
+    it('does not close a year that already has an expiry', async () => {
+      at('2025-09-15T00:00:00.000Z');
+      prisma.entitlementLedger.findMany.mockResolvedValue([{ yearIndex: 1 }]);
+      prisma.entitlementLedger.count.mockResolvedValue(1);
+      prisma.entitlementLedger.aggregate.mockResolvedValue({
+        _sum: { nights: 6 },
+      });
+
+      await service.reconcileAnnualEntitlement(prisma as any, 'ms-1');
+
+      expect(expiries()).toEqual([]);
+    });
+
+    it('dates each row to the year it concerns, not to today', async () => {
+      at('2026-09-15T00:00:00.000Z');
+      prisma.entitlementLedger.aggregate.mockResolvedValue({
+        _sum: { nights: 6 },
+      });
+
+      await service.reconcileAnnualEntitlement(prisma as any, 'ms-1');
+
+      const rows = prisma.entitlementLedger.create.mock.calls.map(
+        (c: any) => c[0].data,
+      );
+      const y2 = rows.find(
+        (d: any) => d.type === LedgerType.ALLOCATION && d.yearIndex === 2,
+      );
+      // Year 2 began on the first anniversary. A backfilled year dated today
+      // would read as though it had just been granted.
+      expect(y2.date.getFullYear()).toBe(2025);
+    });
+
+    it('never runs past the term — a 5-year plan stops at year 5', async () => {
+      // Well past the end of the term.
+      at('2035-01-01T00:00:00.000Z');
+      prisma.entitlementLedger.aggregate.mockResolvedValue({
+        _sum: { nights: 0 },
+      });
+
+      const res = await service.reconcileAnnualEntitlement(
+        prisma as any,
+        'ms-1',
+      );
+
+      expect(res.yearIndex).toBe(5);
+      expect(allocations().map((a: any) => a.year)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('does nothing for a plan with no annual cap', async () => {
+      at('2026-09-15T00:00:00.000Z');
+      prisma.membership.findUnique.mockResolvedValue(
+        annualMembership({
+          package: { name: 'Legacy', nightsPerYear: null, validityMonths: 60 },
+        }),
+      );
+
+      const res = await service.reconcileAnnualEntitlement(
+        prisma as any,
+        'ms-1',
+      );
+
+      // The older behaviour: one lifetime pool, allocated at purchase.
+      expect(res).toEqual({
+        yearIndex: null,
+        allocatedNights: 0,
+        lapsedNights: 0,
+      });
+      expect(prisma.entitlementLedger.create).not.toHaveBeenCalled();
+    });
+
+    /*
+     * A cancelled membership has already had its whole balance closed. Topping
+     * it up with next year's nights would quietly bring it back to life.
+     */
+    it('does nothing for a membership that is not ACTIVE', async () => {
+      at('2026-09-15T00:00:00.000Z');
+      prisma.membership.findUnique.mockResolvedValue(
+        annualMembership({ status: 'CANCELLED' }),
+      );
+
+      const res = await service.reconcileAnnualEntitlement(
+        prisma as any,
+        'ms-1',
+      );
+
+      expect(res.allocatedNights).toBe(0);
+      expect(prisma.entitlementLedger.create).not.toHaveBeenCalled();
+    });
+
+    it('grants nothing before the term starts', async () => {
+      at('2024-01-01T00:00:00.000Z'); // months before START
+
+      const res = await service.reconcileAnnualEntitlement(
+        prisma as any,
+        'ms-1',
+      );
+
+      expect(res.yearIndex).toBeNull();
+      expect(prisma.entitlementLedger.create).not.toHaveBeenCalled();
+    });
+
+    it('every row it writes lands in the PLAN bucket', async () => {
+      at('2026-09-15T00:00:00.000Z');
+      prisma.entitlementLedger.aggregate.mockResolvedValue({
+        _sum: { nights: 6 },
+      });
+
+      await service.reconcileAnnualEntitlement(prisma as any, 'ms-1');
+
+      const buckets = prisma.entitlementLedger.create.mock.calls.map(
+        (c: any) => c[0].data.bucket,
+      );
+      expect(new Set(buckets)).toEqual(new Set(['PLAN']));
+    });
+  });
+
+  describe('creditComplimentaryNights', () => {
+    it('credits the COMPLIMENTARY bucket, not the plan', async () => {
+      await service.creditComplimentaryNights(prisma as any, {
+        customerId: 'cust-1',
+        membershipId: 'ms-1',
+        nights: 2,
+        reason: '02N/03D Complimentary',
+      });
+
+      const { data } = prisma.entitlementLedger.create.mock.calls[0][0];
+      expect(data).toMatchObject({
+        type: LedgerType.ALLOCATION,
+        bucket: 'COMPLIMENTARY',
+        nights: 2,
+        description: '02N/03D Complimentary',
+      });
+    });
+
+    /*
+     * A gift is not part of the annual allowance, so the annual lapse must not
+     * reach it — which is what leaving yearIndex null achieves.
+     */
+    it('is not year-scoped, so the annual lapse leaves it alone', async () => {
+      await service.creditComplimentaryNights(prisma as any, {
+        customerId: 'cust-1',
+        membershipId: 'ms-1',
+        nights: 2,
+        reason: 'Diwali offer',
+      });
+
+      const { data } = prisma.entitlementLedger.create.mock.calls[0][0];
+      expect(data.yearIndex).toBeNull();
+    });
+
+    it('refuses a non-positive gift', async () => {
+      await expect(
+        service.creditComplimentaryNights(prisma as any, {
+          customerId: 'cust-1',
+          membershipId: 'ms-1',
+          nights: 0,
+          reason: 'nothing',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+
 });

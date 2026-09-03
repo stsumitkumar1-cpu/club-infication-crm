@@ -61,7 +61,15 @@ async function bootstrap() {
   app.enableCors({
     origin: env.frontendUrl,
     credentials: true,
-    exposedHeaders: ['X-Correlation-Id', 'Retry-After', 'X-RateLimit-Remaining'],
+    exposedHeaders: [
+      'X-Correlation-Id',
+      'Retry-After',
+      'X-RateLimit-Remaining',
+      // The export endpoint reports its row count here; without exposing it the
+      // browser strips the header and the UI cannot say how much it downloaded.
+      'X-Export-Rows',
+      'Content-Disposition',
+    ],
   });
 
   await app.listen(env.port);

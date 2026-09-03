@@ -3,14 +3,17 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { MembershipStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { customerScopeFilter } from '../common/scope/index.js';
 import type { AuthUser } from '../common/types/index.js';
 import {
   daysForNights,
+  EntitlementBucket,
   LedgerType,
+  membershipYearFor,
+  membershipYearStart,
   type EntitlementBalance,
   type LedgerMovement,
 } from './entitlement.types.js';
@@ -63,13 +66,31 @@ export class EntitlementsService {
       filter.membershipId = where.membershipId;
     }
 
-    const sum = await db.entitlementLedger.aggregate({
-      where: filter,
-      _sum: { nights: true },
-    });
+    /*
+     * Two sums, not one. Complimentary nights are a gift on top of the plan
+     * and the client asked for them apart from it — added together, "nights
+     * left on your plan" has no answer.
+     *
+     * Rows written before the bucket column existed default to PLAN, so
+     * legacy history lands where it belongs without a backfill.
+     */
+    const [plan, complimentary] = await Promise.all([
+      db.entitlementLedger.aggregate({
+        where: { ...filter, bucket: EntitlementBucket.PLAN },
+        _sum: { nights: true },
+      }),
+      db.entitlementLedger.aggregate({
+        where: { ...filter, bucket: EntitlementBucket.COMPLIMENTARY },
+        _sum: { nights: true },
+      }),
+    ]);
 
-    const nights = sum._sum.nights ?? 0;
-    return { nights, days: daysForNights(nights) };
+    const nights = plan._sum.nights ?? 0;
+    return {
+      nights,
+      days: daysForNights(nights),
+      complimentaryNights: complimentary._sum.nights ?? 0,
+    };
   }
 
   /**
@@ -83,6 +104,8 @@ export class EntitlementsService {
         membershipId: movement.membershipId ?? null,
         bookingId: movement.bookingId ?? null,
         type: movement.type,
+        bucket: movement.bucket ?? EntitlementBucket.PLAN,
+        yearIndex: movement.yearIndex ?? null,
         // The column stays for schema compatibility (Spec 6) but is no longer a
         // quantity: days are derived from nights on read, so a separately
         // stored figure could only ever contradict the balance.
@@ -128,6 +151,196 @@ export class EntitlementsService {
       nights: params.nights,
       description: `Allocated by ${params.packageName} membership`,
       actorId: params.actorId,
+    });
+  }
+
+  /**
+   * Brings an annual membership's ledger up to date with the calendar.
+   *
+   * The client's rule: a plan grants N nights each membership year, and unused
+   * nights LAPSE at the end of that year. So the ledger needs two things kept
+   * true — every year up to today has been allocated, and every year before
+   * today has been closed for whatever was left in it.
+   *
+   * Both are written as real rows rather than computed on the fly, which is
+   * what lets balanceFor stay a plain SUM over the whole ledger: each past
+   * year's allocation and its expiry cancel out exactly, so the sum is the
+   * current year's remainder and nothing else. The history also reads honestly
+   * — you can see 6 nights granted in year 2 and 4 of them lapse.
+   *
+   * Idempotent, and called from inside whatever transaction needs a current
+   * balance. Doing it lazily on read rather than from a nightly job means there
+   * is no window where the screen shows nights that have already lapsed, and no
+   * scheduler to go wrong.
+   *
+   * A no-op for a membership with no annual cap (nightsPerYear null), which is
+   * how every plan behaved before this rule existed.
+   */
+  async reconcileAnnualEntitlement(
+    tx: Prisma.TransactionClient,
+    membershipId: string,
+    actorId?: string | null,
+  ): Promise<{
+    yearIndex: number | null;
+    allocatedNights: number;
+    lapsedNights: number;
+  }> {
+    const idle = { yearIndex: null, allocatedNights: 0, lapsedNights: 0 };
+
+    const membership = await tx.membership.findUnique({
+      where: { id: membershipId },
+      select: {
+        id: true,
+        customerId: true,
+        startDate: true,
+        status: true,
+        package: {
+          select: { name: true, nightsPerYear: true, validityMonths: true },
+        },
+      },
+    });
+
+    // Narrowed together so the package is non-null below: a null nightsPerYear
+    // already covers the case of no package at all.
+    const pkg = membership?.package ?? null;
+    const nightsPerYear = pkg?.nightsPerYear ?? null;
+    if (!membership || !pkg || !nightsPerYear) {
+      return idle;
+    }
+
+    /*
+     * Only while the membership is live. A cancelled or expired one has already
+     * had its whole balance closed by closeMembershipBalance, and topping it up
+     * with next year's nights would quietly revive it.
+     */
+    if (membership.status !== 'ACTIVE') {
+      return idle;
+    }
+
+    // ceil, not round: an 18-month term genuinely has a second (part) year, and
+    // rounding it away would silently withhold that year's nights.
+    const totalYears = Math.max(Math.ceil(pkg.validityMonths / 12), 1);
+    const currentYear = membershipYearFor(
+      membership.startDate,
+      totalYears,
+      new Date(),
+    );
+    if (!currentYear) {
+      // Sold with a start date in the future; nothing is due yet.
+      return idle;
+    }
+
+    const already = await tx.entitlementLedger.findMany({
+      where: {
+        membershipId,
+        bucket: EntitlementBucket.PLAN,
+        type: LedgerType.ALLOCATION,
+        yearIndex: { not: null },
+      },
+      select: { yearIndex: true },
+    });
+    const allocatedYears = new Set(already.map((r) => r.yearIndex));
+
+    let allocatedNights = 0;
+    for (let year = 1; year <= currentYear; year += 1) {
+      if (allocatedYears.has(year)) continue;
+
+      await this.record(tx, {
+        customerId: membership.customerId,
+        membershipId,
+        type: LedgerType.ALLOCATION,
+        bucket: EntitlementBucket.PLAN,
+        yearIndex: year,
+        nights: nightsPerYear,
+        description:
+          'Year ' + year + ' of ' + totalYears + ' — ' + nightsPerYear +
+          ' night(s) allocated',
+        actorId: actorId ?? null,
+        // Dated to when the year actually began, not to when this ran, so a
+        // backfilled year does not look like it was granted today.
+        date: membershipYearStart(membership.startDate, year),
+      });
+      allocatedNights += nightsPerYear;
+    }
+
+    /*
+     * Then close every year that is behind us. Runs after allocation on
+     * purpose: a member who booked nothing in year 1 gets that year's grant and
+     * its lapse recorded, which is the honest history — rather than a year that
+     * silently never existed.
+     */
+    let lapsedNights = 0;
+    for (let year = 1; year < currentYear; year += 1) {
+      const closed = await tx.entitlementLedger.count({
+        where: {
+          membershipId,
+          bucket: EntitlementBucket.PLAN,
+          type: LedgerType.EXPIRY,
+          yearIndex: year,
+        },
+      });
+      if (closed > 0) continue;
+
+      const sum = await tx.entitlementLedger.aggregate({
+        where: {
+          membershipId,
+          bucket: EntitlementBucket.PLAN,
+          yearIndex: year,
+        },
+        _sum: { nights: true },
+      });
+      const left = sum._sum.nights ?? 0;
+      if (left <= 0) continue;
+
+      await this.record(tx, {
+        customerId: membership.customerId,
+        membershipId,
+        type: LedgerType.EXPIRY,
+        bucket: EntitlementBucket.PLAN,
+        yearIndex: year,
+        nights: -left,
+        description:
+          'Year ' + year + ' ended — ' + left + ' unused night(s) lapsed',
+        actorId: actorId ?? null,
+        date: membershipYearStart(membership.startDate, year + 1),
+      });
+      lapsedNights += left;
+    }
+
+    return { yearIndex: currentYear, allocatedNights, lapsedNights };
+  }
+
+  /**
+   * Credits complimentary nights — the sheet's "02N/03D Complimentary".
+   *
+   * Its own bucket, so it never inflates what the plan is worth, and
+   * deliberately not year-scoped: a gift is not part of the annual allowance,
+   * so the annual lapse does not touch it.
+   */
+  async creditComplimentaryNights(
+    tx: Prisma.TransactionClient,
+    params: {
+      customerId: string;
+      membershipId: string;
+      nights: number;
+      reason: string;
+      actorId?: string | null;
+    },
+  ) {
+    if (params.nights <= 0) {
+      throw new BadRequestException(
+        'Complimentary nights must be a positive number',
+      );
+    }
+
+    return this.record(tx, {
+      customerId: params.customerId,
+      membershipId: params.membershipId,
+      type: LedgerType.ALLOCATION,
+      bucket: EntitlementBucket.COMPLIMENTARY,
+      nights: params.nights,
+      description: params.reason,
+      actorId: params.actorId ?? null,
     });
   }
 
@@ -229,6 +442,28 @@ export class EntitlementsService {
       customerId: customer.id,
       ...(query.membershipId ? { membershipId: query.membershipId } : {}),
     };
+
+    /*
+     * A read that writes, deliberately. An annual plan's ledger only
+     * becomes correct once the years that have passed are closed, and doing
+     * that here means the figure on screen is never a year stale. It is
+     * idempotent, so repeated reads cost one extra query and write nothing.
+     */
+    if (query.membershipId) {
+      await this.prisma.$transaction((tx) =>
+        this.reconcileAnnualEntitlement(tx, query.membershipId!, currentUser.sub),
+      );
+    } else {
+      const active = await this.prisma.membership.findMany({
+        where: { customerId: customer.id, status: MembershipStatus.ACTIVE },
+        select: { id: true },
+      });
+      for (const m of active) {
+        await this.prisma.$transaction((tx) =>
+          this.reconcileAnnualEntitlement(tx, m.id, currentUser.sub),
+        );
+      }
+    }
 
     const [balance, byType] = await Promise.all([
       this.balanceFor(this.prisma, {

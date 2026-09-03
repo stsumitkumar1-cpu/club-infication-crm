@@ -46,6 +46,9 @@ export class PackagesService {
           price: dto.price,
           days: dto.days,
           nights: dto.nights,
+          // Null keeps the older behaviour: `nights` is one pool for the whole
+          // term rather than an annual allowance that lapses.
+          nightsPerYear: dto.nightsPerYear ?? null,
           validityMonths: dto.validityMonths,
           isActive: dto.isActive ?? true,
         },
@@ -132,6 +135,9 @@ export class PackagesService {
     if (dto.price !== undefined) data.price = dto.price;
     if (dto.days !== undefined) data.days = dto.days;
     if (dto.nights !== undefined) data.nights = dto.nights;
+    if (dto.nightsPerYear !== undefined) {
+      data.nightsPerYear = dto.nightsPerYear;
+    }
     if (dto.validityMonths !== undefined) {
       data.validityMonths = dto.validityMonths;
     }

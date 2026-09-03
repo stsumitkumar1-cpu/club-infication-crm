@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import {
   IsString,
   IsNotEmpty,
@@ -6,6 +7,10 @@ import {
   IsEnum,
   IsEmail,
   IsUUID,
+  IsDate,
+  IsInt,
+  Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 
@@ -21,6 +26,72 @@ export class CreateCustomerDto {
   @IsOptional()
   @IsEmail()
   email?: string;
+
+  /**
+   * Second contact number. 175 rows of the legacy sheet hold two numbers in one
+   * cell, and the client confirmed both are wanted.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  altPhone?: string;
+
+  /** Second applicant on the membership. Present in 819 of 821 sheet rows. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  coApplicant?: string;
+
+  /** Town or city — Bathinda, Moga, Ludhiana. 108 distinct in the sheet. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  location?: string;
+
+  /**
+   * When the sale happened. Defaults to today; supplied when back-dating a
+   * membership, which every imported row does.
+   */
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  saleDate?: Date;
+
+  /** The legacy sheet Offers column, verbatim. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  offersText?: string;
+
+  /**
+   * Complimentary nights promised with the sale, credited to their own bucket
+   * so they never inflate what the plan itself is worth.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(366)
+  complimentaryNights?: number;
+
+  /** Membership conditions — "only for India", "03 & 04 Star properties". */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  remarksText?: string;
+
+  /** Annual Divided Cost due each year, separate from the plan price. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  adaAmount?: number;
+
+  /** Stay history that could not be parsed into bookings, kept verbatim. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  usageNotes?: string;
 
   @IsString()
   @IsNotEmpty()

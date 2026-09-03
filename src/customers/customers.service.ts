@@ -91,6 +91,10 @@ export class CustomersService {
   private async resolveAssignee(
     requested: string | null | undefined,
     currentUser: AuthUser,
+    /**
+     * Set only by the legacy import. See CustomersService.create.
+     */
+    legacyImport = false,
   ): Promise<string | null> {
     if (currentUser.role === Role.EXECUTIVE) {
       return currentUser.sub;
@@ -110,7 +114,19 @@ export class CustomersService {
         'Assigned user not found or not in your team',
       );
     }
-    if (!assignee.isActive) {
+    /*
+     * Two correct rules that disagree, resolved by which of them is being done.
+     *
+     * For new business, refusing a deactivated assignee is right — nobody
+     * should be handed work after they have left.
+     *
+     * For the legacy sheet it is wrong. Roughly half its 822 sales were made by
+     * staff who have since gone, and the client's instruction was to create
+     * those people as inactive accounts precisely so their history stays
+     * attributed to them. Refusing here would leave 400-odd customers with no
+     * owner and hide them from every Manager.
+     */
+    if (!assignee.isActive && !legacyImport) {
       throw new BadRequestException(
         'Cannot assign a customer to a deactivated user',
       );
@@ -129,19 +145,49 @@ export class CustomersService {
     return customer;
   }
 
-  async create(dto: CreateCustomerDto, currentUser: AuthUser) {
-    const existing = await this.prisma.customer.findUnique({
-      where: { phone: dto.phone },
-      select: { id: true },
-    });
+  async create(
+    dto: CreateCustomerDto,
+    currentUser: AuthUser,
+    /**
+     * Set only by the legacy Excel import, and it relaxes exactly two checks —
+     * both because the sheet is two years of history rather than new business:
+     *
+     *   duplicates      the sheet has two members sharing a phone number and 21
+     *                   repeated MAF numbers. The client asked for it to come in
+     *                   as it stands and be corrected in the CRM.
+     *   inactive owner  about half its sales were made by staff who have since
+     *                   left, created here as inactive accounts so their history
+     *                   stays theirs.
+     *
+     * Deliberately a parameter rather than a second create() method: the import
+     * has to go through the same path as the form, or it would quietly skip the
+     * opening payment row, the membership, the annual allocation, the ADA charge
+     * and the status mirror — every invariant this service exists to keep.
+     */
+    options: { legacyImport?: boolean } = {},
+  ) {
+    /*
+     * findFirst, not findUnique: phone and membershipId are no longer unique in
+     * the database, for the reason above.
+     *
+     * The check stays here for manual entry. Dropping the database constraint
+     * was about letting the import through — a human typing a duplicate into
+     * the form is still almost always a mistake.
+     */
+    const existing = options.legacyImport
+      ? null
+      : await this.prisma.customer.findFirst({
+          where: { phone: dto.phone },
+          select: { id: true },
+        });
     if (existing) {
       throw new ConflictException(
         'A customer with this phone number already exists',
       );
     }
 
-    if (dto.membershipId) {
-      const membershipTaken = await this.prisma.customer.findUnique({
+    if (dto.membershipId && !options.legacyImport) {
+      const membershipTaken = await this.prisma.customer.findFirst({
         where: { membershipId: dto.membershipId },
         select: { id: true },
       });
@@ -155,6 +201,7 @@ export class CustomersService {
     const assignedExecId = await this.resolveAssignee(
       dto.assignedExecId,
       currentUser,
+      options.legacyImport,
     );
 
     /*
@@ -188,7 +235,12 @@ export class CustomersService {
         data: {
           name: dto.name,
           phone: dto.phone,
+          // Both numbers, per the client: a member commonly has a main and an
+          // alternative, and the sheet packs them into one cell.
+          altPhone: dto.altPhone || null,
           email: dto.email,
+          coApplicant: dto.coApplicant || null,
+          location: dto.location || null,
           plan: dto.plan,
           amount,
           amountPaid,
@@ -247,6 +299,19 @@ export class CustomersService {
         await this.memberships.recordSaleWithinTransaction(tx, {
           customerId: customer.id,
           packageId: plan.id,
+          // Back-dated for an imported row; today for one typed in.
+          startDate: dto.saleDate,
+          /*
+           * The negotiated figure, not the catalogue's. The same plan went out
+           * anywhere between 10,000 and 70,000 in the legacy sheet, so the
+           * price belongs to the sale rather than to the plan.
+           */
+          salePrice: amount || null,
+          offersText: dto.offersText || null,
+          remarksText: dto.remarksText || null,
+          usageNotes: dto.usageNotes || null,
+          adaAmount: dto.adaAmount ?? null,
+          complimentaryNights: dto.complimentaryNights ?? null,
           actorId: currentUser.sub,
         });
       }
@@ -265,6 +330,9 @@ export class CustomersService {
           assignedExecId: customer.assignedExecId,
           membershipId: customer.membershipId,
           packageId: plan?.id ?? null,
+          coApplicant: customer.coApplicant,
+          location: customer.location,
+          altPhone: customer.altPhone,
         },
       });
 
@@ -308,16 +376,24 @@ export class CustomersService {
     return customer;
   }
 
-  async findAll(query: QueryCustomersDto, currentUser: AuthUser) {
-    const {
-      search,
-      status,
-      plan,
-      assignedExecId,
-      assignedManagerId,
-      page = 1,
-      limit = 20,
-    } = query;
+  /**
+   * Turns a query into Prisma filters.
+   *
+   * Shared by the list and the summary counters so the two cannot disagree —
+   * the counters used to ignore the filters entirely, which meant selecting one
+   * Executive showed their 198 customers in the table above a headline of 835.
+   *
+   * `includeStatus` exists because the status counters are a breakdown BY
+   * status. Applying the status filter to them would collapse the breakdown:
+   * click "Cancelled" and Total would read 3 as well, leaving no way to switch
+   * back. So they honour every filter except their own dimension.
+   */
+  private buildFilters(
+    query: QueryCustomersDto,
+    currentUser: AuthUser,
+    { includeStatus = true }: { includeStatus?: boolean } = {},
+  ): Prisma.CustomerWhereInput[] {
+    const { search, status, plan, assignedExecId, assignedManagerId } = query;
 
     // The caller's scope is always the first filter; every other filter can
     // only narrow it further, never widen it.
@@ -325,7 +401,7 @@ export class CustomersService {
       customerScopeFilter(currentUser),
     ];
 
-    if (status) {
+    if (status && includeStatus) {
       filters.push({ status: status as Prisma.EnumCustomerStatusFilter });
     }
     if (plan) {
@@ -348,6 +424,13 @@ export class CustomersService {
       });
     }
 
+    return filters;
+  }
+
+  async findAll(query: QueryCustomersDto, currentUser: AuthUser) {
+    const { page = 1, limit = 20 } = query;
+
+    const filters = this.buildFilters(query, currentUser);
     const where: Prisma.CustomerWhereInput = { AND: filters };
 
     const [data, total] = await Promise.all([
@@ -463,7 +546,7 @@ export class CustomersService {
     const customer = await this.findScopedOrFail(id, currentUser);
 
     if (dto.phone && dto.phone !== customer.phone) {
-      const phoneTaken = await this.prisma.customer.findUnique({
+      const phoneTaken = await this.prisma.customer.findFirst({
         where: { phone: dto.phone },
         select: { id: true },
       });
@@ -475,7 +558,7 @@ export class CustomersService {
     }
 
     if (dto.membershipId && dto.membershipId !== customer.membershipId) {
-      const membershipTaken = await this.prisma.customer.findUnique({
+      const membershipTaken = await this.prisma.customer.findFirst({
         where: { membershipId: dto.membershipId },
         select: { id: true },
       });
@@ -529,6 +612,11 @@ export class CustomersService {
     const data: Prisma.CustomerUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.phone !== undefined) data.phone = dto.phone;
+    if (dto.altPhone !== undefined) data.altPhone = dto.altPhone || null;
+    if (dto.coApplicant !== undefined) {
+      data.coApplicant = dto.coApplicant || null;
+    }
+    if (dto.location !== undefined) data.location = dto.location || null;
     if (dto.email !== undefined) data.email = dto.email;
     if (dto.plan !== undefined) data.plan = dto.plan;
     if (dto.amount !== undefined) data.amount = dto.amount;
@@ -724,12 +812,33 @@ export class CustomersService {
   }
 
   /** Dashboard counters, scoped exactly like the list endpoint (Spec 12). */
-  async getStats(currentUser: AuthUser) {
-    const scope = customerScopeFilter(currentUser);
+  /**
+   * The summary tiles above the customer list, narrowed by the same filters the
+   * list is showing.
+   *
+   * Before this took a query the counters were always global: picking one
+   * Executive filtered the table to their 198 customers while the headline
+   * still read 835, and the money tiles totalled the whole business. A summary
+   * that does not describe the rows beneath it is worse than no summary.
+   *
+   * Two different filter sets, deliberately:
+   *
+   *   status counters  every filter EXCEPT status. They are a breakdown BY
+   *                    status and double as the switcher between them, so
+   *                    applying the status filter would collapse them — click
+   *                    "Cancelled" and Total would read 3 too.
+   *   money tiles      every filter INCLUDING status, because they describe the
+   *                    rows actually on screen.
+   */
+  async getStats(query: QueryCustomersDto, currentUser: AuthUser) {
+    const facetFilters = this.buildFilters(query, currentUser, {
+      includeStatus: false,
+    });
+    const shownFilters = this.buildFilters(query, currentUser);
 
     const countBy = (extra?: Prisma.CustomerWhereInput) =>
       this.prisma.customer.count({
-        where: { AND: extra ? [scope, extra] : [scope] },
+        where: { AND: extra ? [...facetFilters, extra] : facetFilters },
       });
 
     const [total, active, pending, cancelled, expired, aggregates] =
@@ -740,7 +849,7 @@ export class CustomersService {
         countBy({ status: 'CANCELLED' }),
         countBy({ status: 'EXPIRED' }),
         this.prisma.customer.aggregate({
-          where: { AND: [scope] },
+          where: { AND: shownFilters },
           _sum: { amount: true, amountPaid: true, pendingAmount: true },
         }),
       ]);
@@ -754,6 +863,17 @@ export class CustomersService {
       totalSales: aggregates._sum.amount ?? 0,
       totalPaid: aggregates._sum.amountPaid ?? 0,
       totalPending: aggregates._sum.pendingAmount ?? 0,
+      /*
+       * Says what the figures cover, so the UI can label them rather than
+       * leaving the reader to guess whether 198 is everyone or one person.
+       */
+      scopedBy: {
+        status: query.status ?? null,
+        plan: query.plan ?? null,
+        assignedExecId: query.assignedExecId ?? null,
+        assignedManagerId: query.assignedManagerId ?? null,
+        search: query.search ?? null,
+      },
     };
   }
 
