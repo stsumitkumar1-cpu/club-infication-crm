@@ -57,6 +57,7 @@ describe('BookingsService', () => {
   };
   let entitlements: {
     lockMembershipForUpdate: AnyMock;
+    reconcileAnnualEntitlement: AnyMock;
     balanceFor: AnyMock;
     record: AnyMock;
   };
@@ -99,6 +100,13 @@ describe('BookingsService', () => {
 
     entitlements = {
       lockMembershipForUpdate: mockFn().mockResolvedValue(undefined),
+      // Idle by default: these fixtures use plans with no annual cap, so
+      // reconciling grants and lapses nothing.
+      reconcileAnnualEntitlement: mockFn().mockResolvedValue({
+        yearIndex: null,
+        allocatedNights: 0,
+        lapsedNights: 0,
+      }),
       // Plenty of entitlement by default: 10 days / 8 nights.
       balanceFor: mockFn().mockResolvedValue({ days: 10, nights: 8 }),
       record: mockFn().mockResolvedValue({ id: 'led-1' }),

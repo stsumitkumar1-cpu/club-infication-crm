@@ -168,6 +168,18 @@ export class BookingsService {
     return this.prisma.$transaction(async (tx) => {
       await this.entitlements.lockMembershipForUpdate(tx, membership.id);
 
+      /*
+       * After the lock, before the read. On an annual plan the ledger may
+       * be a year behind — this grants the years that have begun and
+       * lapses the ones that ended, so the balance below is what the member
+       * can actually spend today rather than last year's leftover.
+       */
+      await this.entitlements.reconcileAnnualEntitlement(
+        tx,
+        membership.id,
+        currentUser.sub,
+      );
+
       const balance = await this.entitlements.balanceFor(tx, {
         customerId: customer.id,
         membershipId: membership.id,

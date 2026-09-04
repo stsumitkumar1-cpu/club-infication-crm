@@ -43,9 +43,16 @@ export class CustomersController {
     return this.customersService.findAll(query, user);
   }
 
+  /**
+   * Takes the same query as the list, so the tiles above the table describe the
+   * rows in it rather than the whole business.
+   */
   @Get('stats')
-  getStats(@CurrentUser() user: AuthUser) {
-    return this.customersService.getStats(user);
+  getStats(
+    @Query() query: QueryCustomersDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.customersService.getStats(query, user);
   }
 
   /** Owner options for the customer form, scoped to what the caller may assign. */

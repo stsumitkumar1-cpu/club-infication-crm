@@ -164,6 +164,36 @@ export class MembershipsService {
       startDate?: Date;
       /** Defaults to startDate + the plan's validity, month-end clamped. */
       endDate?: Date;
+
+      /**
+       * What the member actually paid, which is negotiated per customer —
+       * the same plan went out anywhere between 10,000 and 70,000 in the
+       * legacy sheet. Falls back to the catalogue price.
+       */
+      salePrice?: number | null;
+
+      /** The legacy sheet Offers column, verbatim. */
+      offersText?: string | null;
+
+      /** Membership conditions — "only for India", "03 & 04 Star only". */
+      remarksText?: string | null;
+
+      /** Stay history that could not be parsed into Bookings. */
+      usageNotes?: string | null;
+
+      /**
+       * ADA due for the FIRST year. Later years are raised as they fall due
+       * rather than all at once, so an unpaid future year never shows as
+       * arrears the member does not yet owe.
+       */
+      adaAmount?: number | null;
+
+      /**
+       * Complimentary nights promised with the sale. Credited to their own
+       * bucket so they never inflate what the plan is worth.
+       */
+      complimentaryNights?: number | null;
+
       actorId: string;
     },
   ) {
@@ -205,9 +235,41 @@ export class MembershipsService {
           startDate,
           endDate,
           status: MembershipStatus.ACTIVE,
+          salePrice: params.salePrice ?? pkg.price,
+          offersText: params.offersText ?? null,
+          remarksText: params.remarksText ?? null,
+          usageNotes: params.usageNotes ?? null,
         },
         include: MEMBERSHIP_INCLUDE,
       });
+
+      /*
+       * ADA for year 1 only. The sheet records one figure per member and the
+       * charge recurs annually, but raising all five years now would report
+       * arrears for years the member has not reached.
+       */
+      if (params.adaAmount && params.adaAmount > 0) {
+        await tx.adaCharge.create({
+          data: {
+            membershipId: membership.id,
+            yearIndex: 1,
+            amount: params.adaAmount,
+            dueDate: startDate,
+          },
+        });
+      }
+
+      if (params.complimentaryNights && params.complimentaryNights > 0) {
+        await this.entitlements.creditComplimentaryNights(tx, {
+          customerId: customer.id,
+          membershipId: membership.id,
+          nights: params.complimentaryNights,
+          reason: params.offersText
+            ? `Complimentary with the plan — ${params.offersText}`
+            : `${params.complimentaryNights} complimentary night(s) with the plan`,
+          actorId,
+        });
+      }
 
       /*
        * Keep the customer's plan-describing columns in step with the plan they
@@ -236,14 +298,35 @@ export class MembershipsService {
        *
        * The plan's day count is not allocated: it is the span of those nights
        * taken in one stay, not a second budget (see daysForNights).
+       *
+       * Two shapes of plan, and the difference is the client's rule that
+       * unused nights lapse each year:
+       *
+       *   nightsPerYear set  -> reconcileAnnualEntitlement grants year 1 now
+       *                         and later years as they arrive, closing each
+       *                         year that ends. Granting all 30 of a 5-year
+       *                         plan up front would let a member take the lot
+       *                         in month one, which is exactly what lapsing
+       *                         is meant to prevent.
+       *   nightsPerYear null -> the whole total in one allocation, which is
+       *                         how every plan behaved before this rule.
        */
-      const allocation = await this.entitlements.recordAllocation(tx, {
-        customerId: customer.id,
-        membershipId: membership.id,
-        nights: pkg.nights,
-        packageName: pkg.name,
-        actorId,
-      });
+      let allocation: { id: string; nights: number } | null = null;
+      if (pkg.nightsPerYear) {
+        await this.entitlements.reconcileAnnualEntitlement(
+          tx,
+          membership.id,
+          actorId,
+        );
+      } else {
+        allocation = await this.entitlements.recordAllocation(tx, {
+          customerId: customer.id,
+          membershipId: membership.id,
+          nights: pkg.nights,
+          packageName: pkg.name,
+          actorId,
+        });
+      }
 
       /*
        * Money taken before the plan was recorded belongs to it. Attributing it
@@ -276,10 +359,22 @@ export class MembershipsService {
             },
             after: customerUpdate,
           },
-          entitlementAllocated: {
-            ledgerId: allocation.id,
-            nights: pkg.nights,
-          },
+          /*
+           * Two shapes, matching the two allocation paths above: an annual plan
+           * has no single ledger row to point at, because year 1 is granted now
+           * and the rest arrive as the years do.
+           */
+          entitlementAllocated: pkg.nightsPerYear
+            ? {
+                mode: 'annual',
+                nightsPerYear: pkg.nightsPerYear,
+                lifetimeNights: pkg.nights,
+              }
+            : {
+                mode: 'lifetime',
+                ledgerId: allocation?.id ?? null,
+                nights: pkg.nights,
+              },
           paymentsAttributed: attached.count,
           customerStatus,
         },

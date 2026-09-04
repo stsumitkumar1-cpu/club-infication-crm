@@ -64,6 +64,7 @@ describe('MembershipsService', () => {
     closeMembershipBalance: AnyMock;
     reopenMembershipBalance: AnyMock;
     lockMembershipForUpdate: AnyMock;
+    reconcileAnnualEntitlement: AnyMock;
   };
 
   const GOLD = {
@@ -143,6 +144,13 @@ describe('MembershipsService', () => {
         nights: 3,
       }),
       lockMembershipForUpdate: mockFn().mockResolvedValue(undefined),
+      // Idle by default: these fixtures use plans with no annual cap, so
+      // reconciling grants and lapses nothing.
+      reconcileAnnualEntitlement: mockFn().mockResolvedValue({
+        yearIndex: null,
+        allocatedNights: 0,
+        lapsedNights: 0,
+      }),
     };
 
     const moduleRef = await Test.createTestingModule({

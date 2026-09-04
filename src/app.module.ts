@@ -14,6 +14,10 @@ import { ReportsModule } from './reports/reports.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { CustomersModule } from './customers/customers.module.js';
 import { SearchModule } from './search/search.module.js';
+import { ExportsModule } from './exports/exports.module.js';
+import { ImportsModule } from './imports/imports.module.js';
+import { MiscellaneousExpensesModule } from './miscellaneous-expenses/miscellaneous-expenses.module.js';
+import { SalariesIncentivesModule } from './salaries-incentives/salaries-incentives.module.js';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware.js';
@@ -35,6 +39,10 @@ import { CorrelationIdMiddleware } from './common/middleware/correlation-id.midd
     NotificationsModule,
     CustomersModule,
     SearchModule,
+    ExportsModule,
+    ImportsModule,
+    MiscellaneousExpensesModule,
+    SalariesIncentivesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

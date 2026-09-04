@@ -21,6 +21,14 @@ enum Role {
 /// Mirror of the customer's membership status (Spec 11 calls the search filter
 /// "Membership status"). Kept in step by MembershipsService, never by hand --
 /// EXPIRED exists so a plan that ran its term is not recorded as a cancellation.
+/// Which pool an entitlement movement belongs to.
+enum EntitlementBucket {
+  /// Nights bought as part of the plan.
+  PLAN
+  /// Nights given free as an offer, tracked separately from the plan.
+  COMPLIMENTARY
+}
+
 enum CustomerStatus {
   ACTIVE
   PENDING
@@ -97,6 +105,9 @@ model User {
   // Import batches uploaded by this user
   importBatches ImportBatch[]
 
+  // Miscellaneous expenses recorded by this user
+  miscellaneousExpenses MiscellaneousExpense[] @relation("ExpenseRecorder")
+
   @@index([managerId])
   @@index([role])
 }
@@ -105,9 +116,32 @@ model User {
 
 model Customer {
   id              String         @id @default(uuid())
-  membershipId    String?        @unique  // Business identifier (e.g., CI-2026-001)
+  /// The MAF number from the legacy sheet.
+  ///
+  /// Deliberately NOT unique: 153 of 821 imported rows have none, and 21
+  /// numbers are repeated — in a few cases across two different people. The
+  /// client's instruction is to import exactly what the sheet says and let a
+  /// Manager or Super Admin correct it afterwards, so the constraint would
+  /// block the import rather than protect anything.
+  membershipId    String?        // Business identifier (e.g., MAF 140951)
   name            String
-  phone           String         @unique
+  /// Primary contact.
+  ///
+  /// Not unique: the legacy sheet has two members sharing one number (family),
+  /// and rejecting them would lose real customers. Duplicates are surfaced in
+  /// the UI instead of being refused at the database.
+  phone           String
+
+  /// Second number. 175 sheet rows hold two numbers in one cell — the client
+  /// confirmed both are wanted, as main and alternative.
+  altPhone        String?
+
+  /// Second applicant on the membership — present in 819 of 821 sheet rows.
+  coApplicant     String?
+
+  /// Member's town/city (Bathinda, Moga, Ludhiana...). 108 distinct in the
+  /// sheet, filled in 810 rows.
+  location        String?
   email           String?
   plan            String         // e.g., "Bronze", "Silver", "Gold"
   amount          Float          // Total plan cost
@@ -122,6 +156,7 @@ model Customer {
   assignedExec    User?          @relation(fields: [assignedExecId], references: [id])
 
   createdAt       DateTime       @default(now())
+  registrationDate DateTime?
   updatedAt       DateTime       @updatedAt
 
   // Relations
@@ -138,11 +173,31 @@ model Customer {
 
 // ─── PACKAGES ───────────────────────────────────────────
 
+/// The plan catalogue.
+///
+/// The legacy sheet has no plan names — it records validity ("05Years") and an
+/// annual entitlement ("06N/07Days") instead, and the SAME combination was sold
+/// at wildly different prices (a 3-year/4-night plan went out anywhere between
+/// ₹10,000 and ₹70,000). So a catalogue entry describes what the member GETS;
+/// what they PAID lives on their Membership.
 model Package {
   id             String   @id @default(uuid())
-  name           String   @unique  // e.g., "Bronze", "Silver", "Gold"
+  name           String   @unique  // e.g., "5 Years / 6 Nights per year"
+
+  /// Reference/list price only — prefills the form. The figure that counts is
+  /// Membership.salePrice, which the Executive negotiates per customer.
   price          Float
+
+  /// Nights granted each membership year. Null means the older behaviour: the
+  /// whole of `nights` is a single pool for the entire term, with no annual cap.
+  nightsPerYear  Int?
+
+  /// Days per year alongside nightsPerYear — the sheet quotes "06N/07Days", and
+  /// days is always nights + 1 (816 of 817 parseable rows agree).
   days           Int
+
+  /// Lifetime total = nightsPerYear x years. Kept because the sheet carries it
+  /// ("30Nights") and the two are cross-checked on import.
   nights         Int
   validityMonths Int
   isActive       Boolean  @default(true)
@@ -163,9 +218,30 @@ model Membership {
   startDate   DateTime         @default(now())
   endDate     DateTime?
   status      MembershipStatus @default(ACTIVE)
+
+  /// What this member actually paid for the plan, as negotiated. The catalogue
+  /// price is only a starting point (see Package.price).
+  salePrice   Float?
+
+  /// The sheet's "Offers" column, verbatim — "02N/03D Complimentary",
+  /// "Food Voucher of INR3000/-". Complimentary NIGHTS are also credited to the
+  /// ledger under the COMPLIMENTARY bucket so they are counted separately from
+  /// the plan's own nights; this keeps the original wording for everything else.
+  offersText  String?
+
+  /// The sheet's "Remarks" — membership conditions such as "only for India" or
+  /// "03 & 04 Star properties only".
+  remarksText String?
+
+  /// Stay history from the sheet that could not be parsed into Bookings, kept
+  /// verbatim so nothing is lost. Several rows pack up to 8 stays into one cell
+  /// as parallel slash-separated lists that do not reliably line up.
+  usageNotes  String?
+
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
+  adaCharges     AdaCharge[]
   entitlementLog EntitlementLedger[]
   bookings       Booking[]
   payments       Payment[]
@@ -192,6 +268,20 @@ model EntitlementLedger {
   booking      Booking?    @relation(fields: [bookingId], references: [id])
 
   type         String      // ALLOCATION, BOOKING_USAGE, CANCELLATION, ADJUSTMENT, EXPIRY
+
+  /// Which pool this movement belongs to. Complimentary nights are a gift on
+  /// top of the plan, so the client wants them counted apart from it — mixing
+  /// them would make "nights left on your plan" unanswerable.
+  bucket       EntitlementBucket @default(PLAN)
+
+  /// Which membership year (1-based) the movement belongs to.
+  ///
+  /// Entitlement is annual and unused nights lapse at the end of each year, so
+  /// an allocation and its expiry both carry the year they concern. Null on
+  /// movements that are not year-scoped, and on rows written before the annual
+  /// rule existed.
+  yearIndex    Int?
+
   days         Int         @default(0)  // positive = credit, negative = debit
   nights       Int         @default(0)  // positive = credit, negative = debit
   description  String?
@@ -205,6 +295,7 @@ model EntitlementLedger {
   @@index([membershipId])
   @@index([bookingId])
   @@index([type])
+  @@index([membershipId, bucket, yearIndex])
 }
 
 // ─── BOOKINGS ───────────────────────────────────────────
@@ -319,6 +410,9 @@ model IncentiveRecord {
   eligibleSales   Float           @default(0)
   incentiveEarned Float           @default(0)
   incentivePaid   Float           @default(0)
+  baseSalary          Float           @default(0)
+  incentivePercentage Float           @default(0)
+  totalSalary         Float           @default(0)
   status          IncentiveStatus @default(PENDING)
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
@@ -345,6 +439,36 @@ model AuditLog {
 }
 
 // ─── EXCEL IMPORT ───────────────────────────────────────
+
+/// ADA — the "Annual Divided Cost" the sheet tracks per member.
+///
+/// A recurring annual charge, separate from the plan price, with its own
+/// payment status ("ADA Paid"). Deliberately NOT a Payment row: Spec 9.1 makes
+/// Customer.amountPaid the sum of the plan's payments, and folding an annual
+/// maintenance fee into that total would misstate what the member owes on their
+/// plan.
+model AdaCharge {
+  id           String     @id @default(uuid())
+  membershipId String
+  membership   Membership @relation(fields: [membershipId], references: [id])
+
+  /// Which membership year this charge covers, 1-based.
+  yearIndex    Int
+  amount       Float
+  dueDate      DateTime?
+
+  /// Part payments are normal, so this is an amount rather than a flag.
+  paidAmount   Float      @default(0)
+  paidDate     DateTime?
+  method       String?
+  notes        String?
+
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([membershipId, yearIndex])
+  @@index([membershipId])
+}
 
 model ImportBatch {
   id           String       @id @default(uuid())
@@ -373,4 +497,21 @@ model ImportStaging {
   createdAt        DateTime        @default(now())
 
   @@index([batchId])
+}
+
+// ─── MISCELLANEOUS EXPENSES ─────────────────────────────
+
+model MiscellaneousExpense {
+  id           String   @id @default(uuid())
+  title        String
+  amount       Float
+  date         DateTime @default(now())
+  description  String?
+  recordedById String
+  recordedBy   User     @relation("ExpenseRecorder", fields: [recordedById], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([date])
+  @@index([recordedById])
 }

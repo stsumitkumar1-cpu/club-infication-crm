@@ -14,7 +14,7 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "lint": "oxlint src/ test/",
-    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test": "node --experimental-vm-modules --max-old-space-size=4096 node_modules/jest/bin/jest.js",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
     "test:cov": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
@@ -28,7 +28,8 @@
     "reconcile:paid": "node scripts/reconcile-amount-paid.mjs",
     "reconcile:paid:apply": "node scripts/reconcile-amount-paid.mjs --apply && node scripts/reconcile-amount-paid.mjs --apply --mirror",
     "reconcile:status": "node scripts/reconcile-customer-status.mjs",
-    "reconcile:status:apply": "node scripts/reconcile-customer-status.mjs --apply && node scripts/reconcile-customer-status.mjs --apply --mirror"
+    "reconcile:status:apply": "node scripts/reconcile-customer-status.mjs --apply && node scripts/reconcile-customer-status.mjs --apply --mirror",
+    "import:dry-run": "node scripts/dry-run-import.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^12.0.1",
@@ -40,6 +41,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
     "reflect-metadata": "^0.2.2",
@@ -54,6 +56,7 @@
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
     "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.2.0",
     "@types/node": "^24.0.0",
     "@types/supertest": "^7.0.0",
     "jest": "^30.0.0",
