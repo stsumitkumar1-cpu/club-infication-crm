@@ -81,7 +81,7 @@ export class PackagesService {
       filters.push({ isActive });
     }
     if (search) {
-      filters.push({ name: { contains: search, mode: 'insensitive' } });
+      filters.push({ name: { contains: search } });
     }
 
     const where: Prisma.PackageWhereInput =
