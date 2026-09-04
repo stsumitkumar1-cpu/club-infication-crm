@@ -72,7 +72,7 @@ async function bootstrap() {
     ],
   });
 
-  await app.listen(env.port);
+  await app.listen(env.port, '0.0.0.0');
 
   const logger = new Logger('Bootstrap');
   logger.log(
