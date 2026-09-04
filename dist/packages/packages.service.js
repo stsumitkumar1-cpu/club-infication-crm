@@ -38,6 +38,7 @@ let PackagesService = class PackagesService {
                     price: dto.price,
                     days: dto.days,
                     nights: dto.nights,
+                    nightsPerYear: dto.nightsPerYear ?? null,
                     validityMonths: dto.validityMonths,
                     isActive: dto.isActive ?? true,
                 },
@@ -116,6 +117,9 @@ let PackagesService = class PackagesService {
             data.days = dto.days;
         if (dto.nights !== undefined)
             data.nights = dto.nights;
+        if (dto.nightsPerYear !== undefined) {
+            data.nightsPerYear = dto.nightsPerYear;
+        }
         if (dto.validityMonths !== undefined) {
             data.validityMonths = dto.validityMonths;
         }

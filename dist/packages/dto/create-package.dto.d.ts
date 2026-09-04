@@ -3,6 +3,7 @@ export declare class CreatePackageDto {
     price: number;
     days: number;
     nights: number;
+    nightsPerYear?: number;
     validityMonths: number;
     isActive?: boolean;
 }

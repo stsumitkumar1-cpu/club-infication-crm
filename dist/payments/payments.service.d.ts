@@ -33,9 +33,9 @@ export declare class PaymentsService {
         customerId: string;
         membershipId: string | null;
         amount: number;
-        date: Date;
         notes: string | null;
         idempotencyKey: string | null;
+        date: Date;
         method: string | null;
     }>;
     findAll(query: QueryPaymentsDto, currentUser: AuthUser): Promise<{
@@ -64,9 +64,9 @@ export declare class PaymentsService {
             customerId: string;
             membershipId: string | null;
             amount: number;
-            date: Date;
             notes: string | null;
             idempotencyKey: string | null;
+            date: Date;
             method: string | null;
         })[];
         meta: {
@@ -102,9 +102,9 @@ export declare class PaymentsService {
         customerId: string;
         membershipId: string | null;
         amount: number;
-        date: Date;
         notes: string | null;
         idempotencyKey: string | null;
+        date: Date;
         method: string | null;
     }>;
     update(id: string, dto: UpdatePaymentDto, currentUser: AuthUser): Promise<{
@@ -132,9 +132,9 @@ export declare class PaymentsService {
         customerId: string;
         membershipId: string | null;
         amount: number;
-        date: Date;
         notes: string | null;
         idempotencyKey: string | null;
+        date: Date;
         method: string | null;
     }>;
     remove(id: string, currentUser: AuthUser): Promise<{

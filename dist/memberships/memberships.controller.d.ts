@@ -34,6 +34,10 @@ export declare class MembershipsController {
         updatedAt: Date;
         startDate: Date;
         endDate: Date | null;
+        salePrice: number | null;
+        offersText: string | null;
+        remarksText: string | null;
+        usageNotes: string | null;
         customerId: string;
         packageId: string | null;
     }>;
@@ -68,6 +72,10 @@ export declare class MembershipsController {
             updatedAt: Date;
             startDate: Date;
             endDate: Date | null;
+            salePrice: number | null;
+            offersText: string | null;
+            remarksText: string | null;
+            usageNotes: string | null;
             customerId: string;
             packageId: string | null;
         })[];
@@ -116,6 +124,10 @@ export declare class MembershipsController {
         updatedAt: Date;
         startDate: Date;
         endDate: Date | null;
+        salePrice: number | null;
+        offersText: string | null;
+        remarksText: string | null;
+        usageNotes: string | null;
         customerId: string;
         packageId: string | null;
     }>;
@@ -149,6 +161,10 @@ export declare class MembershipsController {
         updatedAt: Date;
         startDate: Date;
         endDate: Date | null;
+        salePrice: number | null;
+        offersText: string | null;
+        remarksText: string | null;
+        usageNotes: string | null;
         customerId: string;
         packageId: string | null;
     }>;
@@ -182,6 +198,10 @@ export declare class MembershipsController {
         updatedAt: Date;
         startDate: Date;
         endDate: Date | null;
+        salePrice: number | null;
+        offersText: string | null;
+        remarksText: string | null;
+        usageNotes: string | null;
         customerId: string;
         packageId: string | null;
     }>;
@@ -215,6 +235,10 @@ export declare class MembershipsController {
         updatedAt: Date;
         startDate: Date;
         endDate: Date | null;
+        salePrice: number | null;
+        offersText: string | null;
+        remarksText: string | null;
+        usageNotes: string | null;
         customerId: string;
         packageId: string | null;
     }>;

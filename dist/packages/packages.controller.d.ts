@@ -18,6 +18,7 @@ export declare class PackagesController {
             days: number;
             price: number;
             nights: number;
+            nightsPerYear: number | null;
             validityMonths: number;
         })[];
         meta: {
@@ -40,6 +41,7 @@ export declare class PackagesController {
         days: number;
         price: number;
         nights: number;
+        nightsPerYear: number | null;
         validityMonths: number;
     }>;
     create(dto: CreatePackageDto, user: AuthUser): Promise<{
@@ -51,6 +53,7 @@ export declare class PackagesController {
         days: number;
         price: number;
         nights: number;
+        nightsPerYear: number | null;
         validityMonths: number;
     }>;
     update(id: string, dto: UpdatePackageDto, user: AuthUser): Promise<{
@@ -62,6 +65,7 @@ export declare class PackagesController {
         days: number;
         price: number;
         nights: number;
+        nightsPerYear: number | null;
         validityMonths: number;
     }>;
     activate(id: string, user: AuthUser): Promise<{
@@ -73,6 +77,7 @@ export declare class PackagesController {
         days: number;
         price: number;
         nights: number;
+        nightsPerYear: number | null;
         validityMonths: number;
     }>;
     deactivate(id: string, user: AuthUser): Promise<{
@@ -84,6 +89,7 @@ export declare class PackagesController {
         days: number;
         price: number;
         nights: number;
+        nightsPerYear: number | null;
         validityMonths: number;
     }>;
     remove(id: string, user: AuthUser): Promise<{

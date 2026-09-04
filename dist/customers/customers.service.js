@@ -52,7 +52,7 @@ let CustomersService = CustomersService_1 = class CustomersService {
     pending(amount, amountPaid) {
         return Math.max(amount - amountPaid, 0);
     }
-    async resolveAssignee(requested, currentUser) {
+    async resolveAssignee(requested, currentUser, legacyImport = false) {
         if (currentUser.role === client_1.Role.EXECUTIVE) {
             return currentUser.sub;
         }
@@ -66,7 +66,7 @@ let CustomersService = CustomersService_1 = class CustomersService {
         if (!assignee) {
             throw new common_1.BadRequestException('Assigned user not found or not in your team');
         }
-        if (!assignee.isActive) {
+        if (!assignee.isActive && !legacyImport) {
             throw new common_1.BadRequestException('Cannot assign a customer to a deactivated user');
         }
         return assignee.id;
@@ -80,16 +80,18 @@ let CustomersService = CustomersService_1 = class CustomersService {
         }
         return customer;
     }
-    async create(dto, currentUser) {
-        const existing = await this.prisma.customer.findUnique({
-            where: { phone: dto.phone },
-            select: { id: true },
-        });
+    async create(dto, currentUser, options = {}) {
+        const existing = options.legacyImport
+            ? null
+            : await this.prisma.customer.findFirst({
+                where: { phone: dto.phone },
+                select: { id: true },
+            });
         if (existing) {
             throw new common_1.ConflictException('A customer with this phone number already exists');
         }
-        if (dto.membershipId) {
-            const membershipTaken = await this.prisma.customer.findUnique({
+        if (dto.membershipId && !options.legacyImport) {
+            const membershipTaken = await this.prisma.customer.findFirst({
                 where: { membershipId: dto.membershipId },
                 select: { id: true },
             });
@@ -97,7 +99,7 @@ let CustomersService = CustomersService_1 = class CustomersService {
                 throw new common_1.ConflictException('A customer with this membership ID already exists');
             }
         }
-        const assignedExecId = await this.resolveAssignee(dto.assignedExecId, currentUser);
+        const assignedExecId = await this.resolveAssignee(dto.assignedExecId, currentUser, options.legacyImport);
         let plan = null;
         if (dto.packageId) {
             const pkg = await this.prisma.package.findUnique({
@@ -119,7 +121,10 @@ let CustomersService = CustomersService_1 = class CustomersService {
                 data: {
                     name: dto.name,
                     phone: dto.phone,
+                    altPhone: dto.altPhone || null,
                     email: dto.email,
+                    coApplicant: dto.coApplicant || null,
+                    location: dto.location || null,
                     plan: dto.plan,
                     amount,
                     amountPaid,
@@ -129,6 +134,7 @@ let CustomersService = CustomersService_1 = class CustomersService {
                     totalNights: dto.totalNights || 0,
                     assignedExecId,
                     membershipId: dto.membershipId || null,
+                    registrationDate: dto.saleDate ?? new Date(),
                 },
                 include: { assignedExec: EXEC_SUMMARY },
             });
@@ -158,6 +164,13 @@ let CustomersService = CustomersService_1 = class CustomersService {
                 await this.memberships.recordSaleWithinTransaction(tx, {
                     customerId: customer.id,
                     packageId: plan.id,
+                    startDate: dto.saleDate,
+                    salePrice: amount || null,
+                    offersText: dto.offersText || null,
+                    remarksText: dto.remarksText || null,
+                    usageNotes: dto.usageNotes || null,
+                    adaAmount: dto.adaAmount ?? null,
+                    complimentaryNights: dto.complimentaryNights ?? null,
                     actorId: currentUser.sub,
                 });
             }
@@ -175,6 +188,9 @@ let CustomersService = CustomersService_1 = class CustomersService {
                     assignedExecId: customer.assignedExecId,
                     membershipId: customer.membershipId,
                     packageId: plan?.id ?? null,
+                    coApplicant: customer.coApplicant,
+                    location: customer.location,
+                    altPhone: customer.altPhone,
                 },
             });
             return customer;
@@ -199,12 +215,12 @@ let CustomersService = CustomersService_1 = class CustomersService {
         }
         return customer;
     }
-    async findAll(query, currentUser) {
-        const { search, status, plan, assignedExecId, assignedManagerId, page = 1, limit = 20, } = query;
+    buildFilters(query, currentUser, { includeStatus = true } = {}) {
+        const { search, status, plan, assignedExecId, assignedManagerId, startDate, endDate } = query;
         const filters = [
             (0, index_js_1.customerScopeFilter)(currentUser),
         ];
-        if (status) {
+        if (status && includeStatus) {
             filters.push({ status: status });
         }
         if (plan) {
@@ -216,6 +232,18 @@ let CustomersService = CustomersService_1 = class CustomersService {
         if (assignedManagerId) {
             filters.push({ assignedExec: { managerId: assignedManagerId } });
         }
+        if (startDate || endDate) {
+            const dateFilter = {};
+            if (startDate) {
+                dateFilter.gte = new Date(startDate);
+            }
+            if (endDate) {
+                const end = new Date(endDate);
+                end.setHours(23, 59, 59, 999);
+                dateFilter.lte = end;
+            }
+            filters.push({ registrationDate: dateFilter });
+        }
         if (search) {
             filters.push({
                 OR: [
@@ -226,6 +254,11 @@ let CustomersService = CustomersService_1 = class CustomersService {
                 ],
             });
         }
+        return filters;
+    }
+    async findAll(query, currentUser) {
+        const { page = 1, limit = 20 } = query;
+        const filters = this.buildFilters(query, currentUser);
         const where = { AND: filters };
         const [data, total] = await Promise.all([
             this.prisma.customer.findMany({
@@ -320,7 +353,7 @@ let CustomersService = CustomersService_1 = class CustomersService {
     async update(id, dto, currentUser) {
         const customer = await this.findScopedOrFail(id, currentUser);
         if (dto.phone && dto.phone !== customer.phone) {
-            const phoneTaken = await this.prisma.customer.findUnique({
+            const phoneTaken = await this.prisma.customer.findFirst({
                 where: { phone: dto.phone },
                 select: { id: true },
             });
@@ -329,7 +362,7 @@ let CustomersService = CustomersService_1 = class CustomersService {
             }
         }
         if (dto.membershipId && dto.membershipId !== customer.membershipId) {
-            const membershipTaken = await this.prisma.customer.findUnique({
+            const membershipTaken = await this.prisma.customer.findFirst({
                 where: { membershipId: dto.membershipId },
                 select: { id: true },
             });
@@ -357,6 +390,13 @@ let CustomersService = CustomersService_1 = class CustomersService {
             data.name = dto.name;
         if (dto.phone !== undefined)
             data.phone = dto.phone;
+        if (dto.altPhone !== undefined)
+            data.altPhone = dto.altPhone || null;
+        if (dto.coApplicant !== undefined) {
+            data.coApplicant = dto.coApplicant || null;
+        }
+        if (dto.location !== undefined)
+            data.location = dto.location || null;
         if (dto.email !== undefined)
             data.email = dto.email;
         if (dto.plan !== undefined)
@@ -504,10 +544,13 @@ let CustomersService = CustomersService_1 = class CustomersService {
         });
         return { message: 'Customer deleted successfully' };
     }
-    async getStats(currentUser) {
-        const scope = (0, index_js_1.customerScopeFilter)(currentUser);
+    async getStats(query, currentUser) {
+        const facetFilters = this.buildFilters(query, currentUser, {
+            includeStatus: false,
+        });
+        const shownFilters = this.buildFilters(query, currentUser);
         const countBy = (extra) => this.prisma.customer.count({
-            where: { AND: extra ? [scope, extra] : [scope] },
+            where: { AND: extra ? [...facetFilters, extra] : facetFilters },
         });
         const [total, active, pending, cancelled, expired, aggregates] = await Promise.all([
             countBy(),
@@ -516,7 +559,7 @@ let CustomersService = CustomersService_1 = class CustomersService {
             countBy({ status: 'CANCELLED' }),
             countBy({ status: 'EXPIRED' }),
             this.prisma.customer.aggregate({
-                where: { AND: [scope] },
+                where: { AND: shownFilters },
                 _sum: { amount: true, amountPaid: true, pendingAmount: true },
             }),
         ]);
@@ -529,6 +572,13 @@ let CustomersService = CustomersService_1 = class CustomersService {
             totalSales: aggregates._sum.amount ?? 0,
             totalPaid: aggregates._sum.amountPaid ?? 0,
             totalPending: aggregates._sum.pendingAmount ?? 0,
+            scopedBy: {
+                status: query.status ?? null,
+                plan: query.plan ?? null,
+                assignedExecId: query.assignedExecId ?? null,
+                assignedManagerId: query.assignedManagerId ?? null,
+                search: query.search ?? null,
+            },
         };
     }
     async findAssignableUsers(currentUser) {

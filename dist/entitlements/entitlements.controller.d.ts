@@ -52,7 +52,9 @@ export declare class EntitlementsController {
             membershipId: string | null;
             bookingId: string | null;
             type: string;
+            bucket: import(".prisma/client").$Enums.EntitlementBucket;
             description: string | null;
+            yearIndex: number | null;
             date: Date;
         })[];
         meta: {
@@ -77,7 +79,9 @@ export declare class EntitlementsController {
         membershipId: string | null;
         bookingId: string | null;
         type: string;
+        bucket: import(".prisma/client").$Enums.EntitlementBucket;
         description: string | null;
+        yearIndex: number | null;
         date: Date;
     }>;
 }

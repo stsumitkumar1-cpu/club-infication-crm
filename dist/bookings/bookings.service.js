@@ -111,6 +111,7 @@ let BookingsService = class BookingsService {
         }
         return this.prisma.$transaction(async (tx) => {
             await this.entitlements.lockMembershipForUpdate(tx, membership.id);
+            await this.entitlements.reconcileAnnualEntitlement(tx, membership.id, currentUser.sub);
             const balance = await this.entitlements.balanceFor(tx, {
                 customerId: customer.id,
                 membershipId: membership.id,

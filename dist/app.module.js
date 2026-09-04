@@ -23,6 +23,10 @@ const reports_module_js_1 = require("./reports/reports.module.js");
 const notifications_module_js_1 = require("./notifications/notifications.module.js");
 const customers_module_js_1 = require("./customers/customers.module.js");
 const search_module_js_1 = require("./search/search.module.js");
+const exports_module_js_1 = require("./exports/exports.module.js");
+const imports_module_js_1 = require("./imports/imports.module.js");
+const miscellaneous_expenses_module_js_1 = require("./miscellaneous-expenses/miscellaneous-expenses.module.js");
+const salaries_incentives_module_js_1 = require("./salaries-incentives/salaries-incentives.module.js");
 const app_controller_js_1 = require("./app.controller.js");
 const app_service_js_1 = require("./app.service.js");
 const correlation_id_middleware_js_1 = require("./common/middleware/correlation-id.middleware.js");
@@ -50,6 +54,10 @@ exports.AppModule = AppModule = __decorate([
             notifications_module_js_1.NotificationsModule,
             customers_module_js_1.CustomersModule,
             search_module_js_1.SearchModule,
+            exports_module_js_1.ExportsModule,
+            imports_module_js_1.ImportsModule,
+            miscellaneous_expenses_module_js_1.MiscellaneousExpensesModule,
+            salaries_incentives_module_js_1.SalariesIncentivesModule,
         ],
         controllers: [app_controller_js_1.AppController],
         providers: [app_service_js_1.AppService],

@@ -11,6 +11,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.EntitlementsService = void 0;
 const common_1 = require("@nestjs/common");
+const client_1 = require("@prisma/client");
 const prisma_service_js_1 = require("../database/prisma.service.js");
 const audit_service_js_1 = require("../audit/audit.service.js");
 const index_js_1 = require("../common/scope/index.js");
@@ -48,12 +49,22 @@ let EntitlementsService = class EntitlementsService {
         if (where.membershipId !== undefined) {
             filter.membershipId = where.membershipId;
         }
-        const sum = await db.entitlementLedger.aggregate({
-            where: filter,
-            _sum: { nights: true },
-        });
-        const nights = sum._sum.nights ?? 0;
-        return { nights, days: (0, entitlement_types_js_1.daysForNights)(nights) };
+        const [plan, complimentary] = await Promise.all([
+            db.entitlementLedger.aggregate({
+                where: { ...filter, bucket: entitlement_types_js_1.EntitlementBucket.PLAN },
+                _sum: { nights: true },
+            }),
+            db.entitlementLedger.aggregate({
+                where: { ...filter, bucket: entitlement_types_js_1.EntitlementBucket.COMPLIMENTARY },
+                _sum: { nights: true },
+            }),
+        ]);
+        const nights = plan._sum.nights ?? 0;
+        return {
+            nights,
+            days: (0, entitlement_types_js_1.daysForNights)(nights),
+            complimentaryNights: complimentary._sum.nights ?? 0,
+        };
     }
     async record(db, movement) {
         return db.entitlementLedger.create({
@@ -62,6 +73,8 @@ let EntitlementsService = class EntitlementsService {
                 membershipId: movement.membershipId ?? null,
                 bookingId: movement.bookingId ?? null,
                 type: movement.type,
+                bucket: movement.bucket ?? entitlement_types_js_1.EntitlementBucket.PLAN,
+                yearIndex: movement.yearIndex ?? null,
                 days: 0,
                 nights: movement.nights,
                 description: movement.description ?? null,
@@ -81,6 +94,113 @@ let EntitlementsService = class EntitlementsService {
             nights: params.nights,
             description: `Allocated by ${params.packageName} membership`,
             actorId: params.actorId,
+        });
+    }
+    async reconcileAnnualEntitlement(tx, membershipId, actorId) {
+        const idle = { yearIndex: null, allocatedNights: 0, lapsedNights: 0 };
+        const membership = await tx.membership.findUnique({
+            where: { id: membershipId },
+            select: {
+                id: true,
+                customerId: true,
+                startDate: true,
+                status: true,
+                package: {
+                    select: { name: true, nightsPerYear: true, validityMonths: true },
+                },
+            },
+        });
+        const pkg = membership?.package ?? null;
+        const nightsPerYear = pkg?.nightsPerYear ?? null;
+        if (!membership || !pkg || !nightsPerYear) {
+            return idle;
+        }
+        if (membership.status !== 'ACTIVE') {
+            return idle;
+        }
+        const totalYears = Math.max(Math.ceil(pkg.validityMonths / 12), 1);
+        const currentYear = (0, entitlement_types_js_1.membershipYearFor)(membership.startDate, totalYears, new Date());
+        if (!currentYear) {
+            return idle;
+        }
+        const already = await tx.entitlementLedger.findMany({
+            where: {
+                membershipId,
+                bucket: entitlement_types_js_1.EntitlementBucket.PLAN,
+                type: entitlement_types_js_1.LedgerType.ALLOCATION,
+                yearIndex: { not: null },
+            },
+            select: { yearIndex: true },
+        });
+        const allocatedYears = new Set(already.map((r) => r.yearIndex));
+        let allocatedNights = 0;
+        for (let year = 1; year <= currentYear; year += 1) {
+            if (allocatedYears.has(year))
+                continue;
+            await this.record(tx, {
+                customerId: membership.customerId,
+                membershipId,
+                type: entitlement_types_js_1.LedgerType.ALLOCATION,
+                bucket: entitlement_types_js_1.EntitlementBucket.PLAN,
+                yearIndex: year,
+                nights: nightsPerYear,
+                description: 'Year ' + year + ' of ' + totalYears + ' — ' + nightsPerYear +
+                    ' night(s) allocated',
+                actorId: actorId ?? null,
+                date: (0, entitlement_types_js_1.membershipYearStart)(membership.startDate, year),
+            });
+            allocatedNights += nightsPerYear;
+        }
+        let lapsedNights = 0;
+        for (let year = 1; year < currentYear; year += 1) {
+            const closed = await tx.entitlementLedger.count({
+                where: {
+                    membershipId,
+                    bucket: entitlement_types_js_1.EntitlementBucket.PLAN,
+                    type: entitlement_types_js_1.LedgerType.EXPIRY,
+                    yearIndex: year,
+                },
+            });
+            if (closed > 0)
+                continue;
+            const sum = await tx.entitlementLedger.aggregate({
+                where: {
+                    membershipId,
+                    bucket: entitlement_types_js_1.EntitlementBucket.PLAN,
+                    yearIndex: year,
+                },
+                _sum: { nights: true },
+            });
+            const left = sum._sum.nights ?? 0;
+            if (left <= 0)
+                continue;
+            await this.record(tx, {
+                customerId: membership.customerId,
+                membershipId,
+                type: entitlement_types_js_1.LedgerType.EXPIRY,
+                bucket: entitlement_types_js_1.EntitlementBucket.PLAN,
+                yearIndex: year,
+                nights: -left,
+                description: 'Year ' + year + ' ended — ' + left + ' unused night(s) lapsed',
+                actorId: actorId ?? null,
+                date: (0, entitlement_types_js_1.membershipYearStart)(membership.startDate, year + 1),
+            });
+            lapsedNights += left;
+        }
+        return { yearIndex: currentYear, allocatedNights, lapsedNights };
+    }
+    async creditComplimentaryNights(tx, params) {
+        if (params.nights <= 0) {
+            throw new common_1.BadRequestException('Complimentary nights must be a positive number');
+        }
+        return this.record(tx, {
+            customerId: params.customerId,
+            membershipId: params.membershipId,
+            type: entitlement_types_js_1.LedgerType.ALLOCATION,
+            bucket: entitlement_types_js_1.EntitlementBucket.COMPLIMENTARY,
+            nights: params.nights,
+            description: params.reason,
+            actorId: params.actorId ?? null,
         });
     }
     async closeMembershipBalance(tx, params) {
@@ -143,6 +263,18 @@ let EntitlementsService = class EntitlementsService {
             customerId: customer.id,
             ...(query.membershipId ? { membershipId: query.membershipId } : {}),
         };
+        if (query.membershipId) {
+            await this.prisma.$transaction((tx) => this.reconcileAnnualEntitlement(tx, query.membershipId, currentUser.sub));
+        }
+        else {
+            const active = await this.prisma.membership.findMany({
+                where: { customerId: customer.id, status: client_1.MembershipStatus.ACTIVE },
+                select: { id: true },
+            });
+            for (const m of active) {
+                await this.prisma.$transaction((tx) => this.reconcileAnnualEntitlement(tx, m.id, currentUser.sub));
+            }
+        }
         const [balance, byType] = await Promise.all([
             this.balanceFor(this.prisma, {
                 customerId: customer.id,

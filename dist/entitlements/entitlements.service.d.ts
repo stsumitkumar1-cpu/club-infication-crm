@@ -24,7 +24,9 @@ export declare class EntitlementsService {
         membershipId: string | null;
         bookingId: string | null;
         type: string;
+        bucket: import(".prisma/client").$Enums.EntitlementBucket;
         description: string | null;
+        yearIndex: number | null;
         date: Date;
     }>;
     lockMembershipForUpdate(tx: Prisma.TransactionClient, membershipId: string): Promise<void>;
@@ -44,7 +46,35 @@ export declare class EntitlementsService {
         membershipId: string | null;
         bookingId: string | null;
         type: string;
+        bucket: import(".prisma/client").$Enums.EntitlementBucket;
         description: string | null;
+        yearIndex: number | null;
+        date: Date;
+    }>;
+    reconcileAnnualEntitlement(tx: Prisma.TransactionClient, membershipId: string, actorId?: string | null): Promise<{
+        yearIndex: number | null;
+        allocatedNights: number;
+        lapsedNights: number;
+    }>;
+    creditComplimentaryNights(tx: Prisma.TransactionClient, params: {
+        customerId: string;
+        membershipId: string;
+        nights: number;
+        reason: string;
+        actorId?: string | null;
+    }): Promise<{
+        actorId: string | null;
+        id: string;
+        createdAt: Date;
+        days: number;
+        nights: number;
+        customerId: string;
+        membershipId: string | null;
+        bookingId: string | null;
+        type: string;
+        bucket: import(".prisma/client").$Enums.EntitlementBucket;
+        description: string | null;
+        yearIndex: number | null;
         date: Date;
     }>;
     closeMembershipBalance(tx: Prisma.TransactionClient, params: {
@@ -62,7 +92,9 @@ export declare class EntitlementsService {
         membershipId: string | null;
         bookingId: string | null;
         type: string;
+        bucket: import(".prisma/client").$Enums.EntitlementBucket;
         description: string | null;
+        yearIndex: number | null;
         date: Date;
     } | null>;
     reopenMembershipBalance(tx: Prisma.TransactionClient, params: {
@@ -79,7 +111,9 @@ export declare class EntitlementsService {
         membershipId: string | null;
         bookingId: string | null;
         type: string;
+        bucket: import(".prisma/client").$Enums.EntitlementBucket;
         description: string | null;
+        yearIndex: number | null;
         date: Date;
     } | null>;
     getBalance(query: {
@@ -133,7 +167,9 @@ export declare class EntitlementsService {
             membershipId: string | null;
             bookingId: string | null;
             type: string;
+            bucket: import(".prisma/client").$Enums.EntitlementBucket;
             description: string | null;
+            yearIndex: number | null;
             date: Date;
         })[];
         meta: {
@@ -158,7 +194,9 @@ export declare class EntitlementsService {
         membershipId: string | null;
         bookingId: string | null;
         type: string;
+        bucket: import(".prisma/client").$Enums.EntitlementBucket;
         description: string | null;
+        yearIndex: number | null;
         date: Date;
     }>;
 }

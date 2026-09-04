@@ -29,9 +29,9 @@ export declare class PaymentsController {
         customerId: string;
         membershipId: string | null;
         amount: number;
-        date: Date;
         notes: string | null;
         idempotencyKey: string | null;
+        date: Date;
         method: string | null;
     }>;
     findAll(query: QueryPaymentsDto, user: AuthUser): Promise<{
@@ -60,9 +60,9 @@ export declare class PaymentsController {
             customerId: string;
             membershipId: string | null;
             amount: number;
-            date: Date;
             notes: string | null;
             idempotencyKey: string | null;
+            date: Date;
             method: string | null;
         })[];
         meta: {
@@ -108,9 +108,9 @@ export declare class PaymentsController {
         customerId: string;
         membershipId: string | null;
         amount: number;
-        date: Date;
         notes: string | null;
         idempotencyKey: string | null;
+        date: Date;
         method: string | null;
     }>;
     update(id: string, dto: UpdatePaymentDto, user: AuthUser): Promise<{
@@ -138,9 +138,9 @@ export declare class PaymentsController {
         customerId: string;
         membershipId: string | null;
         amount: number;
-        date: Date;
         notes: string | null;
         idempotencyKey: string | null;
+        date: Date;
         method: string | null;
     }>;
     remove(id: string, user: AuthUser): Promise<{

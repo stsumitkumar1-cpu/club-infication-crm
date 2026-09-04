@@ -250,6 +250,7 @@ export class CustomersService {
           totalNights: dto.totalNights || 0,
           assignedExecId,
           membershipId: dto.membershipId || null,
+          registrationDate: dto.saleDate ?? new Date(),
         },
         include: { assignedExec: EXEC_SUMMARY },
       });
@@ -393,7 +394,7 @@ export class CustomersService {
     currentUser: AuthUser,
     { includeStatus = true }: { includeStatus?: boolean } = {},
   ): Prisma.CustomerWhereInput[] {
-    const { search, status, plan, assignedExecId, assignedManagerId } = query;
+    const { search, status, plan, assignedExecId, assignedManagerId, startDate, endDate } = query;
 
     // The caller's scope is always the first filter; every other filter can
     // only narrow it further, never widen it.
@@ -412,6 +413,19 @@ export class CustomersService {
     }
     if (assignedManagerId) {
       filters.push({ assignedExec: { managerId: assignedManagerId } });
+    }
+    if (startDate || endDate) {
+      const dateFilter: Prisma.DateTimeFilter = {};
+      if (startDate) {
+        dateFilter.gte = new Date(startDate);
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        // Include the whole end day
+        end.setHours(23, 59, 59, 999);
+        dateFilter.lte = end;
+      }
+      filters.push({ registrationDate: dateFilter });
     }
     if (search) {
       filters.push({

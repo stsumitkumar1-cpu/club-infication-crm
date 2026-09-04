@@ -41,6 +41,10 @@ export declare class MembershipsService {
         updatedAt: Date;
         startDate: Date;
         endDate: Date | null;
+        salePrice: number | null;
+        offersText: string | null;
+        remarksText: string | null;
+        usageNotes: string | null;
         customerId: string;
         packageId: string | null;
     }>;
@@ -49,6 +53,12 @@ export declare class MembershipsService {
         packageId: string;
         startDate?: Date;
         endDate?: Date;
+        salePrice?: number | null;
+        offersText?: string | null;
+        remarksText?: string | null;
+        usageNotes?: string | null;
+        adaAmount?: number | null;
+        complimentaryNights?: number | null;
         actorId: string;
     }): Promise<{
         customer: {
@@ -80,6 +90,10 @@ export declare class MembershipsService {
         updatedAt: Date;
         startDate: Date;
         endDate: Date | null;
+        salePrice: number | null;
+        offersText: string | null;
+        remarksText: string | null;
+        usageNotes: string | null;
         customerId: string;
         packageId: string | null;
     }>;
@@ -114,6 +128,10 @@ export declare class MembershipsService {
             updatedAt: Date;
             startDate: Date;
             endDate: Date | null;
+            salePrice: number | null;
+            offersText: string | null;
+            remarksText: string | null;
+            usageNotes: string | null;
             customerId: string;
             packageId: string | null;
         })[];
@@ -154,6 +172,10 @@ export declare class MembershipsService {
         updatedAt: Date;
         startDate: Date;
         endDate: Date | null;
+        salePrice: number | null;
+        offersText: string | null;
+        remarksText: string | null;
+        usageNotes: string | null;
         customerId: string;
         packageId: string | null;
     }>;
@@ -187,6 +209,10 @@ export declare class MembershipsService {
         updatedAt: Date;
         startDate: Date;
         endDate: Date | null;
+        salePrice: number | null;
+        offersText: string | null;
+        remarksText: string | null;
+        usageNotes: string | null;
         customerId: string;
         packageId: string | null;
     }>;
@@ -221,6 +247,10 @@ export declare class MembershipsService {
         updatedAt: Date;
         startDate: Date;
         endDate: Date | null;
+        salePrice: number | null;
+        offersText: string | null;
+        remarksText: string | null;
+        usageNotes: string | null;
         customerId: string;
         packageId: string | null;
     }>;

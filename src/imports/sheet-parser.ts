@@ -157,11 +157,43 @@ export function excelDate(value: unknown): Date | null {
 
   // Written out by hand: "05-07-2024", "1-3July2026", "09-04-2025".
   const s = String(value).trim();
-  const dmy = s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})$/);
+  const dmy = s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,5})$/);
   if (dmy) {
-    const [, dd, mm, yy] = dmy;
+    let [, p1, p2, yy] = dmy;
+    // Fix typos like 02024 or 02026
+    if (yy.startsWith('0202') && yy.length === 5) {
+      yy = yy.substring(1);
+    }
     const year = yy.length === 2 ? 2000 + Number(yy) : Number(yy);
-    // Day-first, which is how the sheet writes every date it spells out.
+    
+    // Some dates are mm/dd/yyyy instead of dd/mm/yyyy.
+    let dd = Number(p1);
+    let mm = Number(p2);
+    if (mm > 12 && dd <= 12) {
+      // It must be mm/dd/yyyy, swap them
+      const temp = dd;
+      dd = mm;
+      mm = temp;
+    }
+
+    const d = new Date(year, mm - 1, dd);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  // Handle missing hyphen typo: 02-042026
+  const missingHyphen = s.match(/^(\d{1,2})[-\/.](\d{1,2})(\d{4})$/);
+  if (missingHyphen) {
+    const [, dd, mm, yy] = missingHyphen;
+    const year = Number(yy);
+    const d = new Date(year, Number(mm) - 1, Number(dd));
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  
+  // Handle double zero typo with missing hyphen: 10-0802026
+  const doubleZero = s.match(/^(\d{1,2})[-\/.](\d{1,2})0(\d{4})$/);
+  if (doubleZero) {
+    const [, dd, mm, yy] = doubleZero;
+    const year = Number(yy);
     const d = new Date(year, Number(mm) - 1, Number(dd));
     return Number.isNaN(d.getTime()) ? null : d;
   }

@@ -16,6 +16,7 @@ export declare class PackagesService {
         days: number;
         price: number;
         nights: number;
+        nightsPerYear: number | null;
         validityMonths: number;
     }>;
     findAll(query: QueryPackagesDto): Promise<{
@@ -32,6 +33,7 @@ export declare class PackagesService {
             days: number;
             price: number;
             nights: number;
+            nightsPerYear: number | null;
             validityMonths: number;
         })[];
         meta: {
@@ -54,6 +56,7 @@ export declare class PackagesService {
         days: number;
         price: number;
         nights: number;
+        nightsPerYear: number | null;
         validityMonths: number;
     }>;
     update(id: string, dto: UpdatePackageDto, currentUser: AuthUser): Promise<{
@@ -65,6 +68,7 @@ export declare class PackagesService {
         days: number;
         price: number;
         nights: number;
+        nightsPerYear: number | null;
         validityMonths: number;
     }>;
     setActive(id: string, isActive: boolean, currentUser: AuthUser): Promise<{
@@ -76,6 +80,7 @@ export declare class PackagesService {
         days: number;
         price: number;
         nights: number;
+        nightsPerYear: number | null;
         validityMonths: number;
     }>;
     remove(id: string, currentUser: AuthUser): Promise<{

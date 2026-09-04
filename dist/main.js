@@ -34,7 +34,13 @@ async function bootstrap() {
     app.enableCors({
         origin: env_js_1.env.frontendUrl,
         credentials: true,
-        exposedHeaders: ['X-Correlation-Id', 'Retry-After', 'X-RateLimit-Remaining'],
+        exposedHeaders: [
+            'X-Correlation-Id',
+            'Retry-After',
+            'X-RateLimit-Remaining',
+            'X-Export-Rows',
+            'Content-Disposition',
+        ],
     });
     await app.listen(env_js_1.env.port);
     const logger = new common_1.Logger('Bootstrap');

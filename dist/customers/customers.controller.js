@@ -30,8 +30,8 @@ let CustomersController = class CustomersController {
     findAll(query, user) {
         return this.customersService.findAll(query, user);
     }
-    getStats(user) {
-        return this.customersService.getStats(user);
+    getStats(query, user) {
+        return this.customersService.getStats(query, user);
     }
     getAssignableUsers(user) {
         return this.customersService.findAssignableUsers(user);
@@ -66,9 +66,10 @@ __decorate([
 ], CustomersController.prototype, "findAll", null);
 __decorate([
     (0, common_1.Get)('stats'),
-    __param(0, (0, index_js_3.CurrentUser)()),
+    __param(0, (0, common_1.Query)()),
+    __param(1, (0, index_js_3.CurrentUser)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [index_js_1.QueryCustomersDto, Object]),
     __metadata("design:returntype", void 0)
 ], CustomersController.prototype, "getStats", null);
 __decorate([

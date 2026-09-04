@@ -40,8 +40,8 @@ export declare class RefundsService {
         membershipId: string | null;
         amount: number;
         reason: string | null;
-        date: Date;
         idempotencyKey: string | null;
+        date: Date;
     }>;
     findAll(query: QueryRefundsDto, currentUser: AuthUser): Promise<{
         data: ({
@@ -76,8 +76,8 @@ export declare class RefundsService {
             membershipId: string | null;
             amount: number;
             reason: string | null;
-            date: Date;
             idempotencyKey: string | null;
+            date: Date;
         })[];
         meta: {
             total: number;
@@ -119,8 +119,8 @@ export declare class RefundsService {
         membershipId: string | null;
         amount: number;
         reason: string | null;
-        date: Date;
         idempotencyKey: string | null;
+        date: Date;
     }>;
     update(id: string, dto: UpdateRefundDto, currentUser: AuthUser): Promise<{
         customer: {
@@ -154,8 +154,8 @@ export declare class RefundsService {
         membershipId: string | null;
         amount: number;
         reason: string | null;
-        date: Date;
         idempotencyKey: string | null;
+        date: Date;
     }>;
     remove(id: string, currentUser: AuthUser): Promise<{
         message: string;

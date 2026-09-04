@@ -20,6 +20,9 @@ export declare class CustomersController {
         assignedExecId: string | null;
         membershipId: string | null;
         phone: string;
+        altPhone: string | null;
+        coApplicant: string | null;
+        location: string | null;
         plan: string;
         amount: number;
         amountPaid: number;
@@ -27,6 +30,7 @@ export declare class CustomersController {
         validity: string | null;
         totalDays: number;
         totalNights: number;
+        registrationDate: Date | null;
     }>;
     findAll(query: QueryCustomersDto, user: AuthUser): Promise<{
         data: ({
@@ -59,6 +63,9 @@ export declare class CustomersController {
             assignedExecId: string | null;
             membershipId: string | null;
             phone: string;
+            altPhone: string | null;
+            coApplicant: string | null;
+            location: string | null;
             plan: string;
             amount: number;
             amountPaid: number;
@@ -66,6 +73,7 @@ export declare class CustomersController {
             validity: string | null;
             totalDays: number;
             totalNights: number;
+            registrationDate: Date | null;
         })[];
         meta: {
             total: number;
@@ -74,7 +82,7 @@ export declare class CustomersController {
             totalPages: number;
         };
     }>;
-    getStats(user: AuthUser): Promise<{
+    getStats(query: QueryCustomersDto, user: AuthUser): Promise<{
         total: number;
         active: number;
         pending: number;
@@ -83,6 +91,13 @@ export declare class CustomersController {
         totalSales: number;
         totalPaid: number;
         totalPending: number;
+        scopedBy: {
+            status: string | null;
+            plan: string | null;
+            assignedExecId: string | null;
+            assignedManagerId: string | null;
+            search: string | null;
+        };
     }>;
     getAssignableUsers(user: AuthUser): Promise<{
         id: string;
@@ -121,8 +136,8 @@ export declare class CustomersController {
             membershipId: string | null;
             amount: number;
             reason: string | null;
-            date: Date;
             idempotencyKey: string | null;
+            date: Date;
         })[];
         memberships: ({
             package: {
@@ -140,6 +155,10 @@ export declare class CustomersController {
             updatedAt: Date;
             startDate: Date;
             endDate: Date | null;
+            salePrice: number | null;
+            offersText: string | null;
+            remarksText: string | null;
+            usageNotes: string | null;
             customerId: string;
             packageId: string | null;
         })[];
@@ -171,9 +190,9 @@ export declare class CustomersController {
             customerId: string;
             membershipId: string | null;
             amount: number;
-            date: Date;
             notes: string | null;
             idempotencyKey: string | null;
+            date: Date;
             method: string | null;
         })[];
         assignedExec: {
@@ -196,6 +215,9 @@ export declare class CustomersController {
         assignedExecId: string | null;
         membershipId: string | null;
         phone: string;
+        altPhone: string | null;
+        coApplicant: string | null;
+        location: string | null;
         plan: string;
         amount: number;
         amountPaid: number;
@@ -203,6 +225,7 @@ export declare class CustomersController {
         validity: string | null;
         totalDays: number;
         totalNights: number;
+        registrationDate: Date | null;
     }>;
     update(id: string, dto: UpdateCustomerDto, user: AuthUser): Promise<{
         assignedExec: {
@@ -220,6 +243,9 @@ export declare class CustomersController {
         assignedExecId: string | null;
         membershipId: string | null;
         phone: string;
+        altPhone: string | null;
+        coApplicant: string | null;
+        location: string | null;
         plan: string;
         amount: number;
         amountPaid: number;
@@ -227,6 +253,7 @@ export declare class CustomersController {
         validity: string | null;
         totalDays: number;
         totalNights: number;
+        registrationDate: Date | null;
     }>;
     remove(id: string, user: AuthUser): Promise<{
         message: string;

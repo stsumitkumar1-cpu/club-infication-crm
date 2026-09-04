@@ -4,6 +4,8 @@ export declare class QueryCustomersDto {
     plan?: string;
     assignedExecId?: string;
     assignedManagerId?: string;
+    startDate?: string;
+    endDate?: string;
     page?: number;
     limit?: number;
 }

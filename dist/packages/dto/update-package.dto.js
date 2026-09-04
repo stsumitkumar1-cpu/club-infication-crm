@@ -16,6 +16,7 @@ class UpdatePackageDto {
     price;
     days;
     nights;
+    nightsPerYear;
     validityMonths;
     isActive;
 }
@@ -46,6 +47,13 @@ __decorate([
     (0, class_validator_1.Max)(3650),
     __metadata("design:type", Number)
 ], UpdatePackageDto.prototype, "nights", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(366),
+    __metadata("design:type", Number)
+], UpdatePackageDto.prototype, "nightsPerYear", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsInt)(),

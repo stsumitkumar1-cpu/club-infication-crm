@@ -138,9 +138,34 @@ let MembershipsService = class MembershipsService {
                     startDate,
                     endDate,
                     status: client_1.MembershipStatus.ACTIVE,
+                    salePrice: params.salePrice ?? pkg.price,
+                    offersText: params.offersText ?? null,
+                    remarksText: params.remarksText ?? null,
+                    usageNotes: params.usageNotes ?? null,
                 },
                 include: MEMBERSHIP_INCLUDE,
             });
+            if (params.adaAmount && params.adaAmount > 0) {
+                await tx.adaCharge.create({
+                    data: {
+                        membershipId: membership.id,
+                        yearIndex: 1,
+                        amount: params.adaAmount,
+                        dueDate: startDate,
+                    },
+                });
+            }
+            if (params.complimentaryNights && params.complimentaryNights > 0) {
+                await this.entitlements.creditComplimentaryNights(tx, {
+                    customerId: customer.id,
+                    membershipId: membership.id,
+                    nights: params.complimentaryNights,
+                    reason: params.offersText
+                        ? `Complimentary with the plan — ${params.offersText}`
+                        : `${params.complimentaryNights} complimentary night(s) with the plan`,
+                    actorId,
+                });
+            }
             const customerUpdate = await tx.customer.update({
                 where: { id: customer.id },
                 data: {
@@ -152,13 +177,19 @@ let MembershipsService = class MembershipsService {
                 select: { plan: true, validity: true, totalDays: true, totalNights: true },
             });
             const customerStatus = await this.syncCustomerStatus(tx, customer.id);
-            const allocation = await this.entitlements.recordAllocation(tx, {
-                customerId: customer.id,
-                membershipId: membership.id,
-                nights: pkg.nights,
-                packageName: pkg.name,
-                actorId,
-            });
+            let allocation = null;
+            if (pkg.nightsPerYear) {
+                await this.entitlements.reconcileAnnualEntitlement(tx, membership.id, actorId);
+            }
+            else {
+                allocation = await this.entitlements.recordAllocation(tx, {
+                    customerId: customer.id,
+                    membershipId: membership.id,
+                    nights: pkg.nights,
+                    packageName: pkg.name,
+                    actorId,
+                });
+            }
             const attached = await tx.payment.updateMany({
                 where: { customerId: customer.id, membershipId: null },
                 data: { membershipId: membership.id },
@@ -184,10 +215,17 @@ let MembershipsService = class MembershipsService {
                         },
                         after: customerUpdate,
                     },
-                    entitlementAllocated: {
-                        ledgerId: allocation.id,
-                        nights: pkg.nights,
-                    },
+                    entitlementAllocated: pkg.nightsPerYear
+                        ? {
+                            mode: 'annual',
+                            nightsPerYear: pkg.nightsPerYear,
+                            lifetimeNights: pkg.nights,
+                        }
+                        : {
+                            mode: 'lifetime',
+                            ledgerId: allocation?.id ?? null,
+                            nights: pkg.nights,
+                        },
                     paymentsAttributed: attached.count,
                     customerStatus,
                 },
