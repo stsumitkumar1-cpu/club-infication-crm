@@ -67,7 +67,7 @@ let PackagesService = class PackagesService {
             filters.push({ isActive });
         }
         if (search) {
-            filters.push({ name: { contains: search, mode: 'insensitive' } });
+            filters.push({ name: { contains: search } });
         }
         const where = filters.length > 0 ? { AND: filters } : {};
         const [data, total] = await Promise.all([

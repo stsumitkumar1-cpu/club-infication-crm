@@ -40,7 +40,7 @@ let SearchService = class SearchService {
         };
     }
     async searchCustomers(term, limit, currentUser) {
-        const contains = { contains: term, mode: 'insensitive' };
+        const contains = { contains: term };
         const where = {
             AND: [
                 (0, index_js_1.customerScopeFilter)(currentUser),
@@ -84,7 +84,7 @@ let SearchService = class SearchService {
         };
     }
     async searchUsers(term, limit, currentUser) {
-        const contains = { contains: term, mode: 'insensitive' };
+        const contains = { contains: term };
         const where = {
             AND: [
                 (0, index_js_1.assignableUserFilter)(currentUser),
@@ -120,7 +120,7 @@ let SearchService = class SearchService {
     }
     async searchPlans(term, limit) {
         const where = {
-            name: { contains: term, mode: 'insensitive' },
+            name: { contains: term },
         };
         const [rows, total] = await Promise.all([
             this.prisma.package.findMany({

@@ -177,8 +177,8 @@ export class UsersService {
     if (search) {
       filters.push({
         OR: [
-          { name: { contains: search, mode: 'insensitive' } },
-          { email: { contains: search, mode: 'insensitive' } },
+          { name: { contains: search } },
+          { email: { contains: search } },
         ],
       });
     }

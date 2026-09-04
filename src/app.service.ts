@@ -27,7 +27,7 @@ export class AppService {
    * Health check — Master Spec 15.
    *
    * Actually queries the database rather than just returning 200: a process
-   * that is running but cannot reach PostgreSQL is not healthy, and that is
+   * that is running but cannot reach MySQL is not healthy, and that is
    * exactly the failure a load balancer needs to detect.
    */
   async getHealth(): Promise<HealthReport> {

@@ -84,7 +84,7 @@ let EntitlementsService = class EntitlementsService {
         });
     }
     async lockMembershipForUpdate(tx, membershipId) {
-        await tx.$queryRaw `SELECT id FROM "Membership" WHERE id = ${membershipId} FOR UPDATE`;
+        await tx.$queryRaw `SELECT id FROM \`Membership\` WHERE id = ${membershipId} FOR UPDATE`;
     }
     async recordAllocation(tx, params) {
         return this.record(tx, {

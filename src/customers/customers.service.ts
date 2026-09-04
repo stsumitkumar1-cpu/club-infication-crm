@@ -430,10 +430,10 @@ export class CustomersService {
     if (search) {
       filters.push({
         OR: [
-          { name: { contains: search, mode: 'insensitive' } },
+          { name: { contains: search } },
           { phone: { contains: search } },
-          { email: { contains: search, mode: 'insensitive' } },
-          { membershipId: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search } },
+          { membershipId: { contains: search } },
         ],
       });
     }

@@ -74,7 +74,7 @@ export class SearchService {
     limit: number,
     currentUser: AuthUser,
   ): Promise<SearchGroup> {
-    const contains = { contains: term, mode: 'insensitive' as const };
+    const contains = { contains: term };
 
     const where: Prisma.CustomerWhereInput = {
       AND: [
@@ -132,7 +132,7 @@ export class SearchService {
     limit: number,
     currentUser: AuthUser,
   ): Promise<SearchGroup> {
-    const contains = { contains: term, mode: 'insensitive' as const };
+    const contains = { contains: term };
 
     const where: Prisma.UserWhereInput = {
       AND: [
@@ -173,7 +173,7 @@ export class SearchService {
   /** The plan catalog is company-wide, so there is no scope to apply. */
   private async searchPlans(term: string, limit: number): Promise<SearchGroup> {
     const where: Prisma.PackageWhereInput = {
-      name: { contains: term, mode: 'insensitive' },
+      name: { contains: term },
     };
 
     const [rows, total] = await Promise.all([

@@ -130,7 +130,7 @@ export class EntitlementsService {
     tx: Prisma.TransactionClient,
     membershipId: string,
   ): Promise<void> {
-    await tx.$queryRaw`SELECT id FROM "Membership" WHERE id = ${membershipId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM \`Membership\` WHERE id = ${membershipId} FOR UPDATE`;
   }
 
   /** Allocation written when a membership is created (Spec 7, 8.1 step 4). */
