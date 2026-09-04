@@ -55,17 +55,37 @@ export class AllExceptionsFilter implements ExceptionFilter {
       }
     }
 
-    if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
-      // The only place the raw error is recorded.
+    if (status >= HttpStatus.INTERNAL_SERVER_ERROR || !isProduction) {
+      console.error('\n' + '='.repeat(70));
+      console.error(`🚨 [ERROR] ${req.method} ${req.originalUrl}`);
+      console.error(`🆔 Correlation ID: ${correlationId}`);
+      console.error(`📊 Status Code: ${status} (${error})`);
+      if (exception instanceof Error) {
+        console.error(`❌ Error Name: ${exception.name}`);
+        console.error(`💬 Error Message: ${exception.message}`);
+        console.error(`📍 Stack Trace:\n${exception.stack}`);
+        if ((exception as any).cause) {
+          console.error(`🔍 Cause:`, (exception as any).cause);
+        }
+      } else {
+        console.error(`❌ Raw Exception:`, exception);
+      }
+      console.error('='.repeat(70) + '\n');
+
       this.logger.error(
         `${req.method} ${req.originalUrl} failed [${correlationId}]`,
         exception instanceof Error ? exception.stack : String(exception),
       );
-      if (isProduction) {
-        message = 'Internal server error';
-        extra = {};
-      } else if (exception instanceof Error) {
+
+      if (exception instanceof Error) {
         message = exception.message;
+        extra = {
+          ...extra,
+          details: exception.stack,
+          name: exception.name,
+        };
+      } else if (typeof exception === 'string') {
+        message = exception;
       }
     }
 
